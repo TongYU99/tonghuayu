@@ -84,8 +84,20 @@
     }
   });
 
-  /* 通知父页：桥已就位，可以把口令递过来 */
-  reply({ type:'th-gate-ready', nonce:nonce }, '*');
+  /* 通知父页：桥已就位，可以把口令递过来。
+     ⚠️ 必须等 SDK 真的可用再报 —— 坑在这里：SDK 是 defer 脚本，而这个内联脚本在
+     解析阶段就执行了。若此刻立刻报「就位」，父页会在 SDK 还没下载完时就把口令递过来，
+     getClient() 返回 null → 整条桥接被判为 unavailable → 外部通道会静默退回源码里的
+     明文口令（既不落日志，也吊销不掉）—— 正是这一版要消灭的那种「看起来正常、其实没生效」。
+     所以轮询等 SDK，最多 2.5 秒；实在等不到也报就位，由父页按 unavailable 走兜底。 */
+  var waited = 0;
+  function announce(){
+    if(getClient()){ reply({ type:'th-gate-ready', nonce:nonce }, '*'); return; }
+    waited += 100;
+    if(waited >= 2500){ reply({ type:'th-gate-ready', nonce:nonce }, '*'); return; }
+    setTimeout(announce, 100);
+  }
+  announce();
 })();
 </script>
 </body>

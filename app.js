@@ -8637,7 +8637,8 @@ const CLOUD_CFG = {
 };
 const GATE_BRIDGE_URL = CLOUD_CFG.endpoint + '/gate-bridge.html';
 const GATE_TOKEN_KEY = 'th_gate_token';
-const GATE_TIMEOUT_MS = 6000;
+/* 桥接页要等 SDK 下载完才报「就位」（最多 2.5 秒），所以这里的超时要留够 */
+const GATE_TIMEOUT_MS = 9000;
 let _cloudClient = null;
 /* kind: unknown（还没问过）| checking（正在静默验令牌）| ok | bad | offline（创建者已停站）
         | locked（试错太频繁，临时锁）| unavailable（云端到不了 → 走本地兜底） */
