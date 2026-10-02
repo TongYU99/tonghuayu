@@ -8914,7 +8914,9 @@ function versionAskBridge(){
     const frame = document.createElement('iframe');
     frame.setAttribute('aria-hidden','true');
     frame.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;border:0;';
-    /* ver=1：告诉桥接页这次只为问版本（它读得到 version.json，不需要云服务 SDK） */
+    /* 带一个 ver=1 标记：桥接页不据此分支，只是让它「这次被加载是为了问版本、
+       不是为了核口令」在日志与调试里一眼可辨。别在桥接页上按它做跳过加载 ——
+       那会是一条写错就静默退回明文口令的分支，不值得为 62KB 冒这个险。 */
     frame.src = GATE_BRIDGE_URL + '?nonce=' + encodeURIComponent(nonce) + '&ver=1';
     let settled = false;
     const finish = function(v){
