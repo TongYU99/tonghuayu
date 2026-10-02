@@ -8670,9 +8670,16 @@ function gateDeviceId(){
 function gateChannel(){
   try{
     const h = location.hostname || '';
+    /* v2.24.23：先用「精确 origin」认主链，再按域名认别家。
+       起因：分享版是 tonghua-friends.app.workbuddy.host，与主链同属
+       app.workbuddy.host 这一族。若按域名族判定，它会误判成 main，
+       而它又不是精确 origin —— 直连被 403、桥接又不走，最后静默退回本机明文口令：
+       既不落日志（统计失真），也躲过换口令与停站。所以同族的「另一个站点」
+       必须单独成类（wb），照样走桥接。 */
+    if(location.origin === CLOUD_CFG.endpoint) return 'main';
     if(h.indexOf('htmlcode.fun') >= 0) return 'single';
     if(h.indexOf('github.io') >= 0) return 'gh';
-    if(h.indexOf('app.workbuddy.host') >= 0) return 'main';
+    if(h.indexOf('.app.workbuddy.host') >= 0) return 'wb';
     return h ? 'other' : 'local';
   }catch(e){ return 'unknown'; }
 }
@@ -8744,10 +8751,11 @@ function gateRemote(value){
     return gateDirect(value);
   }
   /* 非主链：本页压根碰不到云服务（精确 Origin 会 403），交给主链上的桥接页代问。
-     这条路径不需要本页加载 SDK —— 只有单文件版与 GitHub 版走它；其余情形
-     （手机里另存的文件、未知域名、测试环境）一律判为够不着，直接退回本地口令。 */
+     这条路径不需要本页加载 SDK —— 单文件版、GitHub 版、以及同族但不同 origin 的
+     分享版（wb）都走它；其余情形（手机里另存的文件、未知域名、测试环境）
+     一律判为够不着，直接退回本地口令。 */
   const ch = gateChannel();
-  if(ch === 'single' || ch === 'gh') return gateViaBridge(value);
+  if(ch === 'single' || ch === 'gh' || ch === 'wb') return gateViaBridge(value);
   return Promise.resolve({ status: 'unavailable' });
 }
 /* 进站用：先问服务端；服务端够不着才退回本地口令 */
@@ -8800,11 +8808,12 @@ function gateLayerOn(){
   const g = $('gateLayer');
   return !!(g && g.classList.contains('on'));
 }
-/* v2.24.23：这个通道够不够得着云服务？主链直连；单文件版与 GitHub 版走主链上的桥接。
+/* v2.24.23：这个通道够不够得着云服务？主链直连；单文件版、GitHub 版、
+   以及同族的分享版（wb）都走主链上的桥接。
    都不行（手机里另存的文件、未知域名、离线）才允许退回本地口令。 */
 function gateCloudCapable(){
   const ch = gateChannel();
-  return ch === 'main' || ch === 'single' || ch === 'gh';
+  return ch === 'main' || ch === 'single' || ch === 'gh' || ch === 'wb';
 }
 function passAlreadyOk(){
   let pass = '';

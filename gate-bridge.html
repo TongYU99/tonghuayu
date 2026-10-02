@@ -11,8 +11,9 @@
 <!-- ===========================================================================
      彤话屿 · 口令核验桥接页（v2.24.23）
      为什么需要它：云服务按「精确 Origin」放行，只有本域名（主链）能直连。
-     单文件版在 htmlcode.fun、GitHub 版在 github.io，直连一律 403。
-     于是这两条通道把这一页嵌进隐藏 iframe，由它（同源）代为询问云服务，
+     单文件版在 htmlcode.fun、GitHub 版在 github.io、分享版在同族的另一个
+     worker 域名上（origin 不同），直连一律 403。
+     于是这几条通道把这一页嵌进隐藏 iframe，由它（同源）代为询问云服务，
      再用 postMessage 把 ok / bad 回传 —— 这样它们的口令判定同样由服务端说了算，
      可以统计、可以吊销，而不是各自揣一份写死在源码里的口令。
      协议：父页 → 本页 {type:'th-gate-ask', nonce, pass, device, channel}
@@ -26,8 +27,11 @@
     oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
     publishableKey: 'wbpk_LH8sgrzkWc4ZO24DLCSejY_gAwzDTrHkUv2OORSdmqWQDK8dB305PEp'
   };
-  /* 只服务已知的两条外部通道，避免这一页变成任何人都能用的口令试错接口 */
-  var ALLOWED = ['https://www.htmlcode.fun', 'https://tongyu99.github.io'];
+  /* 只服务已知的外部通道，避免这一页变成任何人都能用的口令试错接口。
+     wb = 同族但不同 origin 的 WorkBuddy 站点（分享版 tonghua-friends）。
+     分享版若尚未创建，这一项是无害的 —— 不存在的 origin 发不出 message。 */
+  var ALLOWED = ['https://www.htmlcode.fun', 'https://tongyu99.github.io',
+                 'https://tonghua-friends.app.workbuddy.host'];
 
   var nonce = '';
   try{ nonce = new URLSearchParams(location.search).get('nonce') || ''; }catch(e){}
