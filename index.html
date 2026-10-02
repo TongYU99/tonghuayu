@@ -1,0 +1,1801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<!-- v2.24.22：iOS Safari 自适应。
+     原来只有 width=device-width + initial-scale，两个坑都没堵：
+       ① 双击会把页面放大一档且不会自动还原；
+       ② 聚焦「字号小于 16px」的输入框时 Safari 会强制放大整页（失焦也不缩回）——
+          这才是「页面有时候自动放大缩小」的真正原因，光禁缩放治不了根。
+     所以两条一起上：viewport 关掉用户缩放，CSS 里把可输入元素提到 16px。 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<link rel="icon" href="favicon.ico">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<meta name="theme-color" content="#1c1c1e">
+<!-- v2.24.21：iOS Safari 的「添加到主屏幕」不读 manifest，只认这几个 apple-* meta。
+     补上之后，三条通道（含单文件短链）在 iPhone 上都能独立全屏运行，不再套一层 Safari 边框。 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="彤话屿">
+<!-- v2.24.4：PWA —— manifest 让浏览器支持「安装到主屏幕」；sw.js 网络优先，打开即最新，离线有兜底 -->
+<link rel="manifest" href="manifest.webmanifest">
+<script>
+if('serviceWorker' in navigator){ addEventListener('load',function(){ try{ navigator.serviceWorker.register('./sw.js').catch(function(){}); }catch(_){}}); }
+</script>
+<script>
+/* v2.24.22：iOS 自适应的第二道闸。
+   光靠 viewport 的 user-scalable=no 不够 —— 部分 iOS 版本（尤其是「添加到主屏幕」
+   的独立模式下）照样允许双指捏合；再叠加一次「快速双击」也会放大一档。
+   这里把这两个手势直接掐掉。只拦捏合与空白处双击：
+     · 页面滚动、列表拖动、拖卡片  —— 走 pan，不受影响；
+     · 输入框 / 文本域上的双击    —— 不拦，免得妨碍双击选词与光标定位。 */
+(function(){
+  try{
+    ['gesturestart','gesturechange','gestureend'].forEach(function(n){
+      document.addEventListener(n,function(e){ e.preventDefault(); },{passive:false});
+    });
+  }catch(_){}
+  var lastTap=0;
+  document.addEventListener('touchend',function(e){
+    var now=Date.now(), dt=now-lastTap; lastTap=now;
+    if(dt>=300) return;
+    var t=e.target;
+    if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable)) return;
+    e.preventDefault();
+  },{passive:false});
+})();
+</script>
+<!-- 防缓存：保证手机端每次拉到最新页面 -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<!-- 分享开关：OFFLINE=1 时整站直接下线（页面不可访问） -->
+<script>window.__OFFLINE__=false;</script>
+<!-- 访问口令：留空=任何人可打开；填了=必须输入口令才能进入 -->
+<script>window.__PASS__='0930';</script>
+<title>彤话屿</title>
+<style>
+/* ============ 基础 ============ */
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+/* v2.24.22：iOS 自适应三件套
+   ① text-size-adjust：横屏 / 旋转后 Safari 会自动把正文字号「撑大」，锁成 100% 不许它动；
+   ② touch-action:manipulation：去掉双击缩放（保留滚动与拖动，不影响拖卡片），
+      顺带干掉老安卓上那 300ms 的点击等待；
+   ③ 可输入元素最小 16px 放在文件末尾的统一媒体查询里（见「iOS 输入框防放大」）。 */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+body{touch-action:manipulation;}
+:root{
+  --accent:#1c1c1e;          /* 主题色（可在主题App中修改） */
+  --accent-ink:#ffffff;
+  --bg:#f1f1f3;
+  --panel:#ffffff;
+  --ink:#1c1c1e;
+  --ink-2:#8a8a8f;
+  --ink-3:#b9b9bf;
+  --line:var(--chip);
+  --radius:20px;
+  --shadow:0 2px 10px rgba(0,0,0,.06);
+  --bubble-radius:18px;      /* 气泡风格（可在主题App中修改） */
+  --page:var(--page);            /* 手机外的页面底色 */
+  --bar:var(--bar);   /* 顶栏 / 输入栏 / 工具行底色 */
+  --bar-2:var(--bar-2); /* 表情面板等 */
+  --bar-3:var(--bar-3);  /* 应用顶栏 / 聊天列表顶栏 */
+  --tint:var(--tint);  /* 桌面壁纸蒙层 */
+  --soft:var(--soft);            /* 输入框底色 */
+  --soft-2:var(--soft-2);          /* 操作面板条目底色 */
+  --chip:var(--chip);            /* 次级按钮底色 */
+  --chip-2:var(--chip-2);          /* 开关关闭态 */
+  --sys:var(--sys);/* 系统提示条 */
+  --skel:var(--skel);            /* 弹窗取消按钮 */
+  --overlay:rgba(28,28,30,.32);
+  --glass-1:rgba(255,255,255,.62); --glass-2:rgba(255,255,255,.85); --glass-line:rgba(255,255,255,.7);
+  --danger-line:#f4d3d2; --warm:#fff7e8; --cool:#eef7ee; --pink:#f6d9e8;
+  --cover-grad:linear-gradient(160deg,#ffffff,#f0f0f3);
+  /* v2.24.4：开屏改蓝灰渐变（用户要求去掉偏咖色调） */
+  --splash-bg:radial-gradient(120% 90% at 50% 6%,#fafbfd 0%,#eef2f8 52%,#dce3ee 100%);
+  --splash-grad:linear-gradient(100deg,#a9b5c9 0%,#8292ac 36%,#57698a 70%,#8292ac 100%);
+  --splash-dim:#98a5bb; --splash-line:#d5dce8; --splash-txt:#64718c;
+  /* v2.24.12：须知卡在半透明开屏页上的玻璃底色 */
+  --nt-card-bg:rgba(255,255,255,.94);
+}
+/* ============ 夜间模式 ============ */
+html[data-theme="dark"]{
+  --bg:#0f0f11;
+  --panel:#1c1c1f;
+  --ink:#f2f2f4;
+  --ink-2:#9b9ba1;
+  --ink-3:#6d6d74;
+  --line:#2a2a2e;
+  --shadow:0 2px 10px rgba(0,0,0,.5);
+  --page:#000;
+  --bar:rgba(22,22,24,.92);
+  --bar-2:rgba(22,22,24,.95);
+  --bar-3:rgba(22,22,24,.9);
+  --tint:rgba(0,0,0,.35);
+  --soft:#26262a;
+  --soft-2:#26262a;
+  --chip:#2e2e33;
+  --chip-2:#3a3a40;
+  --sys:rgba(255,255,255,.08);
+  --skel:#2a2a2e;
+  --overlay:rgba(0,0,0,.55);
+  --glass-1:rgba(255,255,255,.09); --glass-2:rgba(255,255,255,.13); --glass-line:rgba(255,255,255,.14);
+  --danger-line:#5a2a2a; --warm:#3a3222; --cool:#22321f; --pink:#3a2330;
+  --cover-grad:linear-gradient(160deg,#2a2a30,#1b1b1f);
+  /* v2.24.4：开屏暗色同步冷化为蓝灰 */
+  --splash-bg:radial-gradient(120% 90% at 50% 6%,#171b23 0%,#10141c 52%,#070a11 100%);
+  --splash-grad:linear-gradient(100deg,#525d78 0%,#8592b2 38%,#c1cbe2 72%,#8592b2 100%);
+  --splash-dim:#68738a; --splash-line:#2b3140; --splash-txt:#95a0ba;
+  --nt-card-bg:rgba(28,28,32,.86);
+}
+/* 开屏在暗色下的线条改为浅色 */
+html[data-theme="dark"] .sp-island .ln{stroke:#e6e6ea;}
+html[data-theme="dark"] .sp-island .ln-thin{stroke:#e6e6ea;}
+html[data-theme="dark"] .sp-island .ln-fill{fill:#e6e6ea;}
+html[data-theme="dark"] .sp-boat path{stroke:#e6e6ea;}
+html[data-theme="dark"] .sp-line-in{background:#d8d8de;}
+html[data-theme="dark"] .sp-remember input{accent-color:#d8d8de;}
+html[data-theme="dark"] .tile{background:rgba(255,255,255,.1) !important;}
+html[data-theme="dark"] #desktop.wp-dots{background-image:radial-gradient(rgba(255,255,255,.07) 1.2px, transparent 1.4px);}
+html,body{height:100%;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
+  background:var(--page);display:flex;justify-content:center;font-size:15px;color:var(--ink);
+  transition:background .25s ease;
+}
+#phone{
+  width:100%;max-width:480px;height:100dvh;position:relative;overflow:hidden;
+  background:var(--bg);display:flex;flex-direction:column;
+  box-shadow:0 0 40px rgba(0,0,0,.12);
+}
+@media (min-width:520px){ #phone{ border-left:1px solid #ccc; border-right:1px solid #ccc; } }
+/* 大屏手机（Reno16 等 6.5"+）放大基础字号与触控目标 */
+@media (min-height:780px) and (min-width:360px){
+  body{font-size:16px;}
+  .app-icon .tile{width:60px;height:60px;border-radius:19px;}
+  .tool{width:56px;}
+  .inputbar input{height:40px;}
+  .sendbtn{width:58px;height:39px;}
+}
+@media (max-height:640px){ #homePages{padding-top:22px;} #timeWidget{padding:17px 20px;margin-bottom:16px;} #timeWidget .clock{font-size:42px;} #timeWidget .date{font-size:13.5px;} }
+.hide{display:none !important;}
+/* 自定义 CSS 若把「隐藏」改掉会导致整站叠在一起，这里在注入层之后强制兜底 */
+#phone .hide,#msgList .hide{display:none !important;}
+/* 兜底：自定义 CSS 写了过窄的 max-width 时，至少保住气泡基本可读宽度 */
+.bubble{min-width:0;}
+
+/* ============ 状态栏 ============ */
+#statusBar{
+  height:34px;flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;font-size:13px;font-weight:700;z-index:5;position:relative;
+  color:var(--ink);
+}
+#statusBar .right{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;}
+.batt{display:inline-flex;align-items:center;gap:2px;}
+.batt .box{width:20px;height:10px;border:1.5px solid var(--ink);border-radius:3px;position:relative;}
+.batt .box::before{content:'';position:absolute;left:1px;top:1px;bottom:1px;width:70%;background:var(--ink);border-radius:1px;}
+.batt .box::after{content:'';position:absolute;right:-4px;top:2.5px;width:2px;height:4px;background:var(--ink);border-radius:0 1px 1px 0;}
+
+/* ============ 桌面 ============ */
+#desktop{
+  flex:1;overflow-y:auto;overflow-x:hidden;position:relative;
+  padding:10px 18px 20px;display:flex;flex-direction:column;
+}
+/* 默认波点壁纸（可在主题App中更换/上传） */
+#desktop.wp-dots{background-image:radial-gradient(#d3d3d8 1.4px, transparent 1.6px);background-size:22px 22px;}
+#desktop.wp-stripe{background-image:repeating-linear-gradient(45deg,#e9e9ec 0 14px,#f1f1f3 14px 28px);}
+#desktop.wp-plain{background-image:none;}
+#desktop.wp-img{background-size:cover;background-position:center;}
+.wall-tint{position:absolute;inset:0;background:var(--tint);pointer-events:none;}
+
+/* v2.24.7：用户撤回「整体下移」—— 322 的布局合适，保持原样（此占位注释留作版本标记） */
+/* 时间小组件 —— v2.17.0 再放大一圈：横向撑满、时钟 58px */
+#timeWidget{
+  margin:2px 0 26px;padding:22px 24px;border-radius:26px;
+  background:var(--glass-1);backdrop-filter:blur(8px);
+  box-shadow:var(--shadow);border:1px solid var(--glass-line);
+  display:flex;align-items:center;justify-content:space-between;position:relative;
+}
+#timeWidget .clock{font-size:58px;font-weight:800;letter-spacing:.5px;line-height:1;}
+#timeWidget .date{font-size:15px;color:var(--ink-2);margin-top:9px;font-weight:500;}
+#timeWidget .quote{
+  max-width:158px;text-align:right;font-size:12px;color:var(--ink-2);line-height:1.65;
+  font-style:italic;
+}
+#coinMini{display:inline-flex;align-items:center;gap:4px;background:var(--glass-2);border-radius:14px;padding:4px 10px;font-size:12px;font-weight:700;box-shadow:var(--shadow);}
+
+/* 应用网格 */
+.app-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px 8px;position:relative;}
+/* v2.24.0：真实手机桌面 —— 小组件与应用混合网格，支持长按拖拽换位
+   v2.24.3：desk-item 加 touch-action:pan-x —— 水平翻页手势保留，垂直微动不再触发
+   浏览器 pointercancel 杀掉长按（拖拽很难触发的元凶）；屏蔽长按选择/系统菜单 */
+.desk-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px 8px;position:relative;align-items:stretch;}
+.desk-item{position:relative;min-width:0;touch-action:pan-x;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;}
+.desk-item.w2{grid-column:span 2;}
+.desk-item.w4{grid-column:span 4;}
+.desk-item.h2{grid-row:span 2;}
+/* v2.24.3：组件下方 widgets 小字标注（参考用户截图） */
+.desk-item.wcap{display:flex;flex-direction:column;}
+.desk-item.wcap .wdg{flex:1 1 auto;min-height:0;}
+.desk-item .wdg-cap{flex:none;text-align:center;font-size:10px;color:var(--ink-3);margin-top:4px;letter-spacing:.04em;}
+.desk-item .wdg{width:100%;height:100%;box-sizing:border-box;}
+.desk-item .wdg.wdg-photo,.desk-item .wdg.wdg-cal2,.desk-item .wdg.wdg-music2{height:auto;}
+/* v2.24.3：备忘/日历 2×2 大卡（图二）—— 大日期 + 星期 + 多行备忘 */
+.desk-item .wdg-cal2{aspect-ratio:1/1;padding:16px;border-radius:22px;justify-content:flex-start;}
+.wdg-cal2 .cal2-big{font-size:36px;font-weight:800;line-height:1.1;margin-top:10px;font-variant-numeric:tabular-nums;display:flex;align-items:baseline;justify-content:center;white-space:nowrap;} /* v2.24.18：月/日一排居中 */
+.wdg-cal2 .cal2-big small{font-size:15px;font-weight:600;margin:0 3px;}
+.wdg-cal2 .cal2-week{font-size:13px;font-weight:700;color:var(--ink-2);margin-top:4px;}
+.wdg-cal2 .cal2-note{font-size:11.5px;color:var(--ink-2);line-height:1.65;margin-top:auto;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-all;}
+/* v2.24.5：备忘组件改成「待办事项」卡片（仿手机待办 App）——
+   有待办：未完成在前，最多列 3 条，带勾选框；没待办：退化成当日日期。 */
+.desk-item .wdg-todo{aspect-ratio:1/1;padding:14px;border-radius:22px;justify-content:flex-start;cursor:pointer;}
+.wdg-todo .wdg-t{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;color:var(--ink-2);letter-spacing:.02em;}
+.wdg-todo .wdg-t svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+.wdg-todo .todo-left{flex:none;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:#fff;font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;margin-left:2px;}
+.wdg-todo .cal2-big{font-size:34px;font-weight:800;line-height:1.05;margin-top:8px;font-variant-numeric:tabular-nums;display:flex;align-items:baseline;justify-content:center;white-space:nowrap;} /* v2.24.18：月/日一排居中不换行 */
+.wdg-todo .cal2-big small{font-size:14px;font-weight:600;margin:0 3px;}
+.wdg-todo .cal2-week{font-size:12.5px;font-weight:700;color:var(--ink-2);margin-top:3px;}
+.wdg-todo .cal2-empty{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--ink-3);margin-top:auto;padding-top:8px;line-height:1.4;}
+.wdg-todo .cal2-empty svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+.wdg-todo .cal2-list{display:flex;flex-direction:column;gap:6px;margin-top:10px;overflow:hidden;}
+.wdg-todo .cal2-item{display:flex;align-items:flex-start;gap:6px;font-size:11.5px;line-height:1.35;color:var(--ink);}
+.wdg-todo .cal2-box{flex:none;width:14px;height:14px;margin-top:1px;border-radius:5px;border:1.5px solid var(--ink-3);display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;}
+.wdg-todo .cal2-box svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+.wdg-todo .cal2-item.done .cal2-box{background:var(--accent);border-color:var(--accent);color:#fff;}
+.wdg-todo .cal2-txt{flex:1;min-width:0;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.wdg-todo .cal2-item.done .cal2-txt{text-decoration:line-through;color:var(--ink-3);}
+.wdg-todo .cal2-more{font-size:10.5px;color:var(--ink-3);margin-top:2px;}
+/* 待办编辑面板（action-sheet 内） */
+.todo-list{display:flex;flex-direction:column;gap:2px;max-height:46vh;overflow-y:auto;margin-bottom:10px;}
+.todo-row{display:flex;align-items:center;gap:9px;padding:9px 2px;border-bottom:1px solid var(--line,#ececec);}
+.todo-row.done .todo-tx{text-decoration:line-through;color:var(--ink-3);}
+.todo-box{flex:none;width:20px;height:20px;border-radius:7px;border:1.6px solid var(--ink-3);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-sizing:border-box;transition:background .15s,border-color .15s;}
+.todo-box svg{width:12px;height:12px;stroke:#fff;fill:none;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;}
+.todo-row.done .todo-box{background:var(--accent);border-color:var(--accent);}
+.todo-tx{flex:1;min-width:0;font-size:13.5px;line-height:1.4;word-break:break-all;}
+.todo-x{flex:none;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-3);font-size:13px;cursor:pointer;border-radius:8px;}
+.todo-x:active{background:var(--glass-2);}
+.todo-add{display:flex;gap:8px;align-items:center;}
+.todo-add input{flex:1;min-width:0;height:40px;padding:0 12px;border-radius:12px;border:1px solid var(--line,#e2e2e2);background:var(--glass-2);color:var(--ink);font-size:13.5px;box-sizing:border-box;}
+.todo-add input:focus{outline:none;border-color:var(--accent);}
+.todo-add .btn{flex:none;width:40px;height:40px;padding:0;display:inline-flex;align-items:center;justify-content:center;}
+/* v2.24.3：音乐 4×2 全宽播放器横条（图一）—— 封面+歌名+进度条+控制键 */
+.desk-item .wdg-music2{aspect-ratio:16/7;padding:14px 16px;border-radius:22px;justify-content:space-between;}
+.wdg-music2 .mu2-top{display:flex;align-items:center;gap:12px;min-width:0;}
+.wdg-music2 .mu2-art{flex:none;width:44px;height:44px;border-radius:14px;background:var(--glass-2);display:flex;align-items:center;justify-content:center;color:var(--ink-2);box-shadow:var(--shadow);}
+.wdg-music2 .mu2-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.wdg-music2 .mu2-name{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wdg-music2 .mu2-sub{font-size:11px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wdg-music2 .mu2-eq{flex:none;display:flex;align-items:flex-end;gap:2.5px;height:16px;}
+.wdg-music2 .mu2-eq i{width:3px;border-radius:2px;background:var(--ink-3);height:35%;}
+.wdg-music2.playing .mu2-eq i{background:var(--accent);animation:eq 1.1s ease-in-out infinite;}
+.wdg-music2.playing .mu2-eq i:nth-child(2){animation-delay:.18s;}
+.wdg-music2.playing .mu2-eq i:nth-child(3){animation-delay:.36s;}
+.wdg-music2 .mu2-bar{display:flex;align-items:center;gap:8px;}
+.wdg-music2 .mu2-track{flex:1;height:4px;border-radius:2px;background:var(--ink-3);opacity:.28;overflow:hidden;}
+.wdg-music2 .mu2-fill{display:block;height:100%;width:0;border-radius:2px;background:var(--ink);}
+/* v2.24.14：进度条改成由 audio 真实进度驱动（data-muprog），不再用 14s 假动画 */
+.wdg-music2.playing .mu2-fill{animation:none;}
+.wdg-music2:not(.playing) .mu2-fill{width:0 !important;}
+@keyframes mu2prog{0%{width:4%;}88%{width:96%;}100%{width:96%;}}
+.wdg-music2 .mu2-ctl{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+.wdg-music2 .mu2-gap{flex:1;}
+.wdg-music2 .mu2-btn{flex:none;width:34px;height:34px;border:none;background:transparent;color:var(--ink);display:flex;align-items:center;justify-content:center;border-radius:12px;cursor:pointer;padding:0;}
+.wdg-music2 .mu2-btn:active{background:var(--glass-2);transform:scale(.94);}
+.wdg-music2 .mu2-btn.mu2-main{width:44px;height:44px;background:var(--glass-2);box-shadow:var(--shadow);}
+/* v2.24.5：播放中提示 —— 桌面组件本身没有播放器面板，指引到音乐页看官方播放器 */
+.wdg-music2 .mu2-now{flex:none;display:flex;align-items:center;justify-content:center;gap:4px;font-size:10px;color:var(--ink-3);letter-spacing:.02em;}
+.wdg-music2 .mu2-now svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+.desk-item.dragging{opacity:.22;filter:grayscale(.4);}
+.desk-item.drop-hint{outline:2px dashed var(--accent);outline-offset:3px;border-radius:20px;}
+body.dragging{user-select:none;-webkit-user-select:none;}
+body.dragging *{cursor:grabbing !important;}
+#dragGhost{position:fixed;z-index:300;pointer-events:none;transform:translate(-50%,-50%) scale(1.06);opacity:.95;filter:drop-shadow(0 10px 22px rgba(0,0,0,.3));}
+/* v2.23.0：手机桌面式左右滑动分页 + 页点指示 */
+#homePages{flex:1;display:flex;overflow-x:auto;overflow-y:visible;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;}
+#homePages::-webkit-scrollbar{display:none;}
+.hp-page{min-width:100%;width:100%;scroll-snap-align:center;scroll-snap-stop:always;padding:0 0 6px;display:flex;flex-direction:column;}
+.hp-page .hp-pad{padding:0 10px;}   /* v2.24.4：左右 18→10px，与 #dock 的 10px 外边距齐平 */
+#pageDots{flex:none;display:flex;justify-content:center;align-items:center;gap:7px;padding:4px 0 12px;}
+#pageDots i{width:6px;height:6px;border-radius:3px;background:var(--ink-2);opacity:.35;transition:all .22s ease;cursor:pointer;}
+#pageDots i.on{width:18px;background:var(--ink);opacity:.75;}
+/* v2.23.0：桌面小组件（日历 / 照片 / 音乐迷你播放器，内容可编辑） */
+.wdg{
+  border-radius:22px;background:var(--glass-1);backdrop-filter:blur(8px);
+  box-shadow:var(--shadow);border:1px solid var(--glass-line);
+  padding:16px;position:relative;overflow:hidden;cursor:pointer;
+  min-height:118px;display:flex;flex-direction:column;
+}
+/* v2.24.0：照片大组件 —— 参考手机相册风格的整幅照片卡，放首页占 2×2。
+   v2.24.2：去掉 min-height:200px（会把同行 1×1 方卡拉高），改用跨行自然撑高 + aspect-ratio 兜底 */
+.wdg.wdg-photo{padding:0;aspect-ratio:1/1;min-height:0;}
+.wdg.wdg-photo .ph-cap{padding:26px 14px 10px;font-size:12px;}
+.wdg:active{transform:scale(.98);}
+.wdg.wdg-wide{grid-column:span 2;min-height:104px;}
+.wdg .wdg-t{font-size:11px;font-weight:700;color:var(--ink-2);letter-spacing:.08em;display:flex;align-items:center;gap:5px;}
+.wdg .wdg-t svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.wdg .wdg-big{font-size:36px;font-weight:800;line-height:1.15;margin-top:8px;font-variant-numeric:tabular-nums;}
+.wdg .wdg-big small{font-size:14px;font-weight:600;margin:0 2px;}
+.wdg .wdg-sub{font-size:12px;color:var(--ink-2);margin-top:5px;line-height:1.6;}
+.wdg .wdg-ph{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink-3);border:1.5px dashed var(--ink-3);border-radius:18px;margin-top:10px;padding:18px 0;font-size:11px;}
+.wdg .wdg-ph svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+.wdg-photo{padding:0;border-radius:22px;}
+.wdg-photo img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+/* v2.24.6：用户明确要求「传完图片之后不要加入底部的渐变」——
+   去掉原先的 linear-gradient(transparent,rgba(0,0,0,.5)) 遮罩。
+   配字改成照片下方的一枚独立半透明小胶囊，不再压在照片底部做渐变过渡。 */
+/* v2.24.19：用户反馈「配的文字不用加胶囊框，直接放文字就好」——
+   去掉半透明胶囊底与模糊，只留文字本体（加一层柔和文字阴影保证在浅色照片上可读）。 */
+.wdg-photo .ph-cap{
+  position:absolute;left:12px;right:12px;bottom:10px;
+  padding:0;font-size:11.5px;font-weight:600;color:#fff;
+  background:none;border-radius:0;backdrop-filter:none;
+  text-shadow:0 1px 4px rgba(0,0,0,.55),0 0 2px rgba(0,0,0,.4);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;
+}
+.wdg-photo .ph-cap:empty{display:none;}
+.wdg-music .mu-name{font-size:12.5px;font-weight:800;margin-top:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wdg-music .mu-art{font-size:10px;color:var(--ink-2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mu-bars{display:flex;align-items:flex-end;gap:2.5px;height:13px;margin-top:7px;}
+.mu-bars i{width:3px;border-radius:2px;background:var(--ink-3);height:30%;}
+.wdg-music.playing .mu-bars i{background:var(--accent);animation:eq 1.1s ease-in-out infinite;}
+.wdg-music.playing .mu-bars i:nth-child(2){animation-delay:.14s;}
+.wdg-music.playing .mu-bars i:nth-child(3){animation-delay:.28s;}
+.wdg-music.playing .mu-bars i:nth-child(4){animation-delay:.42s;}
+.wdg-music.playing .mu-bars i:nth-child(5){animation-delay:.56s;}
+@keyframes eq{0%,100%{height:24%;}50%{height:100%;}}
+.app-icon{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;user-select:none;}
+.app-icon:active{transform:scale(.92);}
+.app-icon .tile{
+  width:56px;height:56px;border-radius:18px;
+  background:var(--glass-2);box-shadow:var(--shadow);
+  border:1px solid var(--glass-line);
+  display:flex;align-items:center;justify-content:center;font-size:24px;
+  transition:transform .1s;position:relative;
+}
+.app-icon .label{font-size:11px;color:var(--ink-2);font-weight:600;}
+.badge{
+  position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;border-radius:9px;
+  background:#e0443f;color:#fff;font-size:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;padding:0 5px;
+}
+
+/* Dock —— v2.24.3 再上移（底边距 10→26px），并加大与页点的呼吸感，更贴近真机桌面比例 */
+#dock{
+  flex:none;margin:8px 10px calc(env(safe-area-inset-bottom) + 26px);
+  background:var(--glass-1);backdrop-filter:blur(10px);
+  border-radius:28px;box-shadow:var(--shadow);border:1px solid var(--glass-line);
+  display:flex;justify-content:space-around;padding:12px 8px;
+}
+#dock .app-icon .tile{width:54px;height:54px;border-radius:17px;background:var(--glass-2);}
+#dock .app-icon{gap:5px;}
+#dock .app-icon .label{display:block;font-size:10.5px;}
+
+/* ============ 应用窗口 ============ */
+#appWindow{
+  position:absolute;inset:0;z-index:30;background:var(--bg);
+  display:flex;flex-direction:column;
+  animation:appIn .22s ease;
+}
+@keyframes appIn{from{opacity:0;transform:scale(1.04);}to{opacity:1;transform:none;}}
+#appHead{
+  flex:none;padding:calc(env(safe-area-inset-top) + 12px) 14px 11px;
+  display:flex;align-items:center;gap:10px;
+  border-bottom:1px solid var(--line);background:var(--bar-3);backdrop-filter:blur(10px);
+}
+/* v2.20.0：名称+状态竖排但改为靠左 —— 居中会被刘海屏挖孔摄像头遮住 */
+#appHead .title{font-size:16.5px;font-weight:800;flex:1;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;min-width:0;}
+#appHead .title .sub{font-size:11px;color:var(--ink-2);font-weight:500;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.iconbtn{
+  width:34px;height:34px;border-radius:50%;border:none;cursor:pointer;flex:none;
+  background:var(--panel);box-shadow:var(--shadow);font-size:15px;color:var(--ink);
+  display:flex;align-items:center;justify-content:center;
+}
+#appBody{flex:1;overflow-y:auto;padding:16px 16px calc(env(safe-area-inset-bottom) + 20px);-webkit-overflow-scrolling:touch;}
+#appBody.chat-mode{padding:0;display:flex;flex-direction:column;overflow:hidden;}
+
+/* ============ 通用组件 ============ */
+.card{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:14px;}
+.card .title{font-weight:700;font-size:15px;display:flex;align-items:center;gap:7px;line-height:1.5;}
+.card .title svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+.card .title .count{font-weight:400;}
+/* v2.23.0：说明文案不再局促 —— 行高/间距整体放宽 */
+.card .desc{font-size:12.5px;color:var(--ink-2);margin-top:5px;line-height:1.85;}
+.card .desc code{background:var(--soft);border-radius:6px;padding:1.5px 7px;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ink);word-break:break-all;}
+.rowline{display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--line);}
+.rowline:last-child{border-bottom:none;}
+.rowline .name{font-size:14px;font-weight:600;line-height:1.5;}
+.rowline .meta{font-size:11px;color:var(--ink-2);margin-top:3px;line-height:1.7;}
+.rowline .right{display:flex;align-items:center;gap:10px;}
+.count{font-size:12px;color:var(--ink-3);}
+.field{margin-bottom:14px;}
+.field label{font-size:12px;color:var(--ink-2);display:block;margin-bottom:6px;}
+.field input,.field textarea,.field select{
+  width:100%;border:1px solid var(--line);border-radius:14px;padding:11px 14px;
+  font-size:14px;outline:none;background:var(--soft);color:var(--ink);font-family:inherit;
+}
+.field textarea{min-height:120px;resize:vertical;line-height:1.7;}
+.btn{
+  display:inline-block;border:none;cursor:pointer;background:var(--accent);color:var(--accent-ink);
+  font-size:14px;font-weight:600;padding:11px 18px;border-radius:16px;transition:transform .1s;font-family:inherit;
+}
+.btn:active{transform:scale(.96);}
+.btn.ghost{background:var(--chip);color:var(--ink);}
+.btn.danger{background:var(--panel);color:#e0443f;border:1px solid var(--danger-line);}
+.btn.small{padding:7px 13px;font-size:12px;border-radius:12px;}
+.btn.block{width:100%;}
+.avatar{
+  width:42px;height:42px;border-radius:50%;flex:none;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:16px;color:#fff;
+  box-shadow:var(--shadow);
+}
+.avatar.sm{width:34px;height:34px;font-size:13px;}
+.avatar.md{width:44px;height:44px;font-size:18px;}
+.avatar.lg{width:74px;height:74px;font-size:28px;}
+.empty{text-align:center;color:var(--ink-3);font-size:13px;padding:30px 0;}
+.section-label{font-size:12px;color:var(--ink-2);font-weight:700;margin:4px 2px 10px;}
+
+.switch{
+  width:46px;height:27px;border-radius:14px;background:var(--chip-2);
+  position:relative;cursor:pointer;transition:background .2s;flex:none;border:none;
+}
+.switch::after{
+  content:'';position:absolute;top:2.5px;left:2.5px;width:22px;height:22px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3);transition:left .2s;
+}
+.switch.on{background:var(--accent);}
+.switch.on::after{left:21px;}
+
+.toast{
+  position:fixed;left:50%;bottom:110px;transform:translateX(-50%) translateY(20px);
+  background:rgba(28,28,30,.92);color:#fff;font-size:13px;padding:10px 20px;border-radius:20px;
+  opacity:0;pointer-events:none;transition:all .25s;z-index:200;max-width:80%;text-align:center;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ============ 聊天 ============ */
+#msgList{flex:1;overflow-y:auto;overflow-x:visible;padding:20px 16px 22px;min-height:0;}
+.divider{text-align:center;font-size:11px;color:var(--ink-3);margin:14px 0 10px;}
+/* 系统提示条（拍一拍 / 已读 / 领取红包 等）—— 原来是 11px 居中浅色，太小 */
+.sysline{text-align:center;font-size:12.5px;color:var(--ink-2);margin:9px 32px;background:var(--sys);border-radius:12px;padding:5px 12px;line-height:1.55;font-weight:500;}
+/* 气泡外的装饰角标需要溢出可见：row 放开裁切并留出上下空间 */
+.row{display:flex;align-items:flex-end;gap:8px;margin:16px 0;overflow:visible;position:relative;}
+.row .bubble{overflow:visible;}
+.row.me{flex-direction:row-reverse;}
+.bubble{
+  max-width:72%;padding:10px 14px;border-radius:var(--bubble-radius);
+  background:var(--panel);box-shadow:var(--shadow);line-height:1.55;
+  word-break:break-word;white-space:pre-wrap;border-bottom-left-radius:6px;animation:pop .25s ease;
+}
+.row.me .bubble{
+  background:var(--accent);color:var(--accent-ink);
+  border-bottom-left-radius:var(--bubble-radius);border-bottom-right-radius:6px;
+}
+@keyframes pop{from{opacity:0;transform:translateY(6px) scale(.97);}to{opacity:1;transform:none;}}
+/* v2.24.6：红包改成**微信那种紧凑小卡片**。
+   用户反馈上一版 186px 的「红信封 + 大金币 開」太大、太玩具感。
+   微信真实样式是：一张 118×128 左右的小红卡，左上角是金色钱袋图标 + 一句「xx的红包」，
+   正中是小小的「開」字封口，底部一行「微信红包」水印。这里按这个比例复刻。 */
+.rp-wrap.rp{
+  background:none;padding:0;min-width:0;box-shadow:none;border-radius:0;
+  border-bottom-left-radius:0;overflow:visible;
+}
+.row.me .rp-wrap.rp{border-bottom-right-radius:0;}
+.rp-wrap.rp .rp-env{
+  position:relative;width:118px;height:128px;border-radius:10px;overflow:hidden;
+  background:linear-gradient(160deg,#f5713c 0%,#ec4b2c 42%,#d93a20 100%);
+  box-shadow:0 3px 10px rgba(180,44,28,.28);
+  display:flex;flex-direction:column;padding:10px 10px 0;
+}
+/* 顶部那道弧形高光（微信用的是很淡的一层，别太亮） */
+.rp-wrap.rp .rp-flap{
+  position:absolute;left:0;right:0;top:0;height:44px;
+  background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,0));
+  border-bottom-left-radius:50% 22px;border-bottom-right-radius:50% 22px;
+  pointer-events:none;
+}
+.rp-wrap.rp .rp-head{
+  position:relative;display:flex;align-items:center;gap:5px;
+  color:#ffe7c2;font-size:11px;line-height:1.3;padding:0;
+}
+.rp-wrap.rp .rp-head svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none;}
+.rp-wrap.rp .rp-head .rp-from{
+  font-size:11px;font-weight:500;opacity:.94;
+  display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+/* 中央的「開」字封口 —— 微信就是一枚小小的金色圆章，直径 36px 左右 */
+.rp-wrap.rp .rp-body{
+  position:relative;flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding-bottom:6px;
+}
+.rp-wrap.rp .rp-open{
+  width:36px;height:36px;border-radius:50%;flex:none;
+  background:radial-gradient(circle at 36% 30%,#ffeec4,#f8cf72 62%,#dda63a 100%);
+  box-shadow:0 1px 4px rgba(120,20,10,.30),inset 0 -1px 2px rgba(150,80,0,.22);
+  display:flex;align-items:center;justify-content:center;
+}
+.rp-wrap.rp .rp-open b{font-size:16px;font-weight:700;color:#9c3a0c;line-height:1;font-family:"KaiTi","STKaiti",serif;}
+.rp-wrap.rp .rp-bot{
+  position:absolute;left:0;right:0;bottom:0;padding:4px 0 5px;text-align:center;
+  font-size:9px;letter-spacing:.06em;color:rgba(255,231,194,.62);
+  background:rgba(0,0,0,.06);
+}
+.rp-wrap.rp .rp-txt{margin-top:6px;font-size:10.5px;font-weight:600;color:#ffe7c2;text-align:center;line-height:1.35;}
+.rp-wrap.rp .rp-sub{margin-top:2px;font-size:9px;color:rgba(255,231,194,.68);text-align:center;}
+/* 可领取：轻微呼吸引导（不再整块发光，微信没这个效果，做淡一点） */
+.rp-wrap.rp.claimable{cursor:pointer;}
+.rp-wrap.rp.claimable .rp-open{animation:rpBob 1.6s ease-in-out infinite;}
+@keyframes rpBob{0%,100%{transform:translateY(0);}50%{transform:translateY(-2px);}}
+.rp-wrap.rp.claimable:active{transform:scale(.975);}
+/* 已领取：整卡降饱和压暗，封口换成对勾 */
+.rp-wrap.rp.claimed{cursor:default;}
+.rp-wrap.rp.claimed .rp-env{background:linear-gradient(160deg,#d9a79f 0%,#c9908a 48%,#b3776e 100%);box-shadow:0 2px 7px rgba(120,60,50,.20);}
+.rp-wrap.rp.claimed .rp-open{background:radial-gradient(circle at 36% 30%,#f8f1ec,#ddcbc2 60%,#bda69c 100%);}
+.rp-wrap.rp.claimed .rp-open b{color:#7a6259;font-family:inherit;font-size:15px;}
+.rp-wrap.rp.claimed .rp-bot{color:rgba(251,234,230,.66);}
+/* 引用回复条（输入框上方） */
+.quote-bar{padding:0 14px;}
+.quote-bar.hide{display:none;}
+.quote-bar .qb-inner{display:flex;align-items:center;gap:8px;background:var(--soft-2);border-left:3px solid var(--accent);border-radius:10px;padding:7px 10px;margin-bottom:6px;animation:pop .2s;}
+.quote-bar .qb-txt{flex:1;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.quote-bar .qb-txt b{color:var(--ink);}
+.quote-bar .qb-x{cursor:pointer;font-size:12px;color:var(--ink-3);padding:2px 4px;}
+.typing{display:flex;gap:4px;padding:14px 16px;}
+.typing i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);animation:blink 1.2s infinite;}
+.typing i:nth-child(2){animation-delay:.2s;}
+.typing i:nth-child(3){animation-delay:.4s;}
+@keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0);}40%{opacity:1;transform:translateY(-3px);}}
+
+.chat-body{flex:1;display:flex;flex-direction:column;min-height:0;padding:0;}
+/* 输入栏：v2.19.0 起常驻（微信式），高度缩短；把手 / 收起箭头 / collapsed 全部移除 */
+.inputbar-wrap{
+  flex:none;background:var(--bar);backdrop-filter:blur(10px);
+  border-top:1px solid var(--line);position:relative;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.inputbar{
+  padding:5px 12px 8px;display:flex;align-items:center;gap:7px;
+  flex:none;overflow:hidden;
+}
+.inputbar input{
+  flex:1;height:37px;border:none;outline:none;border-radius:19px;padding:0 15px;
+  background:var(--panel);box-shadow:var(--shadow);font-size:14.5px;color:var(--ink);min-width:0;
+}
+/* v2.24.0：发送按钮再优化 —— 空输入时幽灵态融入输入栏，有文字点亮为主题色药丸 */
+.sendbtn{
+  width:54px;height:36px;border-radius:18px;border:none;cursor:pointer;flex:none;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 86%,#fff),var(--accent));
+  color:var(--accent-ink);
+  font-size:12.5px;font-weight:700;letter-spacing:2px;text-indent:2px;font-family:inherit;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 26%,transparent),inset 0 1px 0 rgba(255,255,255,.35);
+  transition:transform .12s,box-shadow .2s,background .2s,color .2s,opacity .2s;
+}
+.sendbtn.idle{
+  background:var(--panel);color:var(--ink-3);box-shadow:var(--shadow);border:1px solid var(--line);
+}
+.sendbtn:active{transform:scale(.93);box-shadow:0 1px 4px color-mix(in srgb,var(--accent) 20%,transparent);}
+.toolrow{display:flex;justify-content:space-around;padding:7px 8px calc(env(safe-area-inset-bottom) + 7px);background:var(--bar);border-top:1px solid var(--line);flex:none;}
+.tool{
+  width:52px;border-radius:12px;border:none;background:transparent;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0;
+  color:var(--ink);opacity:.8;
+}
+.tool svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+.tool b{font-size:10px;font-weight:600;letter-spacing:.5px;color:var(--ink-2);}
+.tool:active{transform:scale(.9);}
+/* v2.17.0 微信化：输入栏右侧「+」号 —— 表情 / 通话 / 拍一拍等全部收进加号面板（v2.19.0 缩小） */
+.plusbtn{
+  width:37px;height:37px;border-radius:50%;border:1.5px solid var(--line);cursor:pointer;flex:none;
+  background:var(--panel);color:var(--ink-2);
+  display:flex;align-items:center;justify-content:center;transition:transform .1s,background .15s;
+}
+.plusbtn svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;}
+.plusbtn:active{transform:scale(.92);}
+.plusbtn.on{background:var(--chip);color:var(--ink);transform:rotate(45deg);}
+/* 加号面板：微信风格格子（表情 / 表情包 / 拍一拍 / 通话 / @ / 更多） */
+.plus-panel{
+  background:var(--bar);border-top:1px solid var(--line);flex:none;
+  padding:14px 10px calc(env(safe-area-inset-bottom) + 14px);
+  display:grid;grid-template-columns:repeat(4,1fr);gap:14px 6px;
+  animation:ppIn .18s ease;
+}
+@keyframes ppIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+.plus-item{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;}
+.plus-item:active{transform:scale(.93);}
+.plus-item .pi-ic{
+  width:52px;height:52px;border-radius:16px;background:var(--panel);box-shadow:var(--shadow);
+  display:flex;align-items:center;justify-content:center;
+}
+.plus-item .pi-ic svg{width:23px;height:23px;stroke:var(--ink);fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+.plus-item b{font-size:10.5px;font-weight:600;color:var(--ink-2);letter-spacing:.03em;}
+/* 消息时间戳 —— 原来 9px/--ink-3 太小太浅，看不清 */
+.mts{font-size:11px;color:var(--ink-2);align-self:flex-end;margin:0 3px 5px;flex:none;font-variant-numeric:tabular-nums;font-weight:500;}
+#appExtra.dots{font-size:19px;font-weight:800;letter-spacing:2px;line-height:1;}
+.emoji-panel{
+  display:flex;flex-wrap:wrap;gap:6px;padding:10px 14px calc(env(safe-area-inset-bottom) + 12px);
+  background:var(--bar-2);border-top:1px solid var(--line);flex:none;max-height:180px;overflow-y:auto;
+}
+.emoji-panel span{font-size:22px;cursor:pointer;padding:4px 6px;border-radius:8px;}
+.emoji-panel span:active{background:var(--chip);}
+
+/* 联系人列表 */
+.contact-item{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--line);cursor:pointer;}
+.contact-item:last-child{border-bottom:none;}
+.contact-item:active{background:var(--soft-2);}
+.contact-item .info{flex:1;min-width:0;}
+.contact-item .info .nm{font-weight:700;font-size:15px;display:flex;align-items:center;gap:6px;}
+.contact-item .info .pv{font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.unread{
+  min-width:18px;height:18px;border-radius:9px;background:#e0443f;color:#fff;font-size:10px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;padding:0 5px;flex:none;
+}
+.delx{color:var(--ink-3);cursor:pointer;font-size:15px;padding:6px;flex:none;}
+.delx:hover{color:#e0443f;}
+
+/* 操作面板（聊天 + 号） */
+.action-sheet{position:absolute;inset:0;z-index:60;display:flex;align-items:flex-end;animation:fadeIn .18s ease;}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+.sheet-mask{position:absolute;inset:0;background:rgba(0,0,0,.25);}
+.sheet-panel{
+  position:relative;width:100%;background:var(--panel);border-radius:24px 24px 0 0;
+  padding:18px 18px calc(env(safe-area-inset-bottom) + 18px);
+  animation:sheetUp .22s ease;
+}
+@keyframes sheetUp{from{transform:translateY(40px);opacity:.5;}to{transform:none;opacity:1;}}
+.sheet-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px 6px;margin-top:8px;}
+.sheet-grid .act{display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;font-size:11px;color:var(--ink-2);}
+.sheet-grid .act .ic{
+  width:50px;height:50px;border-radius:16px;background:var(--chip);
+  display:flex;align-items:center;justify-content:center;
+}
+.sheet-grid .act .ic svg{width:22px;height:22px;stroke:var(--ink);fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+/* ============ 音乐 App（v2.23.0；v2.24.0 播放器美化：渐变卡+黑胶盘+播放/暂停） ============ */
+.mu-hero{
+  border-radius:24px;padding:20px 18px 18px;margin-bottom:14px;position:relative;overflow:hidden;
+  background:linear-gradient(160deg,color-mix(in srgb,var(--accent) 18%,var(--glass-1)) 0%,var(--glass-1) 58%,transparent 100%);
+  border:1px solid var(--glass-line);box-shadow:var(--shadow);
+}
+.mu-hero .mu-glow{position:absolute;top:-56px;right:-40px;width:180px;height:180px;border-radius:50%;
+  background:radial-gradient(circle,color-mix(in srgb,var(--accent) 26%,transparent),transparent 68%);pointer-events:none;}
+.mu-disc{
+  width:132px;height:132px;border-radius:50%;margin:6px auto 14px;position:relative;flex:none;
+  background:
+    radial-gradient(circle at 50% 50%,var(--accent) 0 17%,transparent 17.5%),
+    repeating-radial-gradient(circle at 50% 50%,#2b2b30 0 2px,#222226 2px 4px);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 14px 32px rgba(0,0,0,.32),inset 0 0 0 1px rgba(255,255,255,.07),inset 0 0 0 22px rgba(255,255,255,.03);
+}
+.mu-disc::after{content:'';position:absolute;width:12px;height:12px;border-radius:50%;background:var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.4);}
+.mu-disc .mu-note{color:rgba(255,255,255,.9);display:flex;}
+.mu-disc.spin{animation:spin 9s linear infinite;}
+.mu-ctl{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:10px;}
+.mu-ctl button{
+  border:1.5px solid var(--glass-line);background:var(--glass-2);color:var(--ink);
+  border-radius:50%;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;
+  transition:transform .1s,background .15s;
+}
+.mu-ctl button:active{transform:scale(.9);}
+.mu-ctl .c-sm{width:40px;height:40px;}
+.mu-ctl .c-sm svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mu-ctl .c-main{width:54px;height:54px;background:var(--accent);color:var(--accent-ink);border:none;
+  box-shadow:0 6px 16px color-mix(in srgb,var(--accent) 36%,transparent);}
+.mu-ctl .c-main svg{width:21px;height:21px;}
+.mu-name-hero{font-size:17px;font-weight:800;text-align:center;line-height:1.4;}
+.mu-artist-hero{font-size:12px;color:var(--ink-2);text-align:center;margin-top:3px;}
+/* v2.24.14：音乐页播放区 —— 站内直连播放，所以能画出真实进度条 */
+.mu-out{width:100%;border-radius:16px;margin-top:14px;background:var(--panel);box-shadow:var(--shadow);padding:14px 16px;}
+.mu-out-hint{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);margin-bottom:9px;}
+.mu-out-hint .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.6s ease-in-out infinite;}
+.mu-out .bar{height:4px;border-radius:3px;background:var(--soft-2);overflow:hidden;cursor:pointer;}
+.mu-out .bar i{display:block;height:100%;width:0;background:var(--accent);border-radius:3px;transition:width .2s linear;}
+.mu-out .tm{display:flex;justify-content:space-between;font-size:10px;color:var(--ink-3);margin-top:6px;font-variant-numeric:tabular-nums;}
+/* 音量条 */
+.mu-vol{display:flex;align-items:center;gap:10px;margin-top:12px;}
+.mu-vol .lb{display:flex;color:var(--ink-3);flex:none;}
+.mu-vol input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:3px;background:var(--soft-2);outline:none;}
+.mu-vol input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--panel);box-shadow:0 1px 4px rgba(0,0,0,.2);cursor:pointer;}
+.mu-vol .pc{font-size:10px;color:var(--ink-3);width:28px;text-align:right;flex:none;font-variant-numeric:tabular-nums;}
+.mu-track{display:flex;align-items:center;gap:10px;padding:11px 4px;border-bottom:1px solid var(--line);cursor:pointer;}
+.mu-track:last-child{border-bottom:none;}
+.mu-track:active{background:var(--soft-2);}
+.mu-track .no{font-size:11px;color:var(--ink-3);width:20px;text-align:center;flex:none;font-variant-numeric:tabular-nums;}
+.mu-track .ti{flex:1;min-width:0;}
+.mu-track .ti .n{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mu-track .ti .a{font-size:11px;color:var(--ink-2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mu-track.on .ti .n{color:var(--accent);}
+.mu-track .act{color:var(--ink-3);display:flex;gap:10px;flex:none;padding:4px 2px;}
+.mu-track .act span{cursor:pointer;display:flex;}
+.mu-track .act svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+/* 一起听横幅（聊天输入栏上方；v2.24.0 内嵌网易云小播放器，邀约后直接能按播放） */
+.listen-bar{
+  flex:none;display:flex;align-items:center;gap:10px;
+  background:var(--bar);backdrop-filter:blur(10px);border-top:1px solid var(--line);
+  padding:8px 14px;position:relative;flex-wrap:wrap;
+}
+.listen-bar .lb-eq{display:flex;align-items:flex-end;gap:2px;height:15px;flex:none;}
+.listen-bar .lb-eq i{width:3px;background:var(--accent);border-radius:2px;height:40%;animation:eq 1s ease-in-out infinite;}
+.listen-bar .lb-eq i:nth-child(2){animation-delay:.2s;}
+.listen-bar .lb-eq i:nth-child(3){animation-delay:.4s;}
+.listen-bar .lb-tx{flex:1;min-width:0;font-size:11px;color:var(--ink-2);line-height:1.4;}
+.listen-bar .lb-tx b{display:block;color:var(--ink);font-size:12.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.listen-bar .btn{flex:none;}
+
+/* v2.24.14：浮窗从「206px 大面板」改成「52px 小圆」。
+   —— 一次解决三条反馈：
+   ①太占地方碍事 → 默认只留一颗小圆，点一下才展开控制面板；
+   ②「叉掉浮窗音乐也停」→ 关闭键改成「收回小圆」，播放完全不中断；
+   ③播放本身不出声 → 出声源已从网易云 iframe 换成站内直连 <audio>（#muHost 里挂着）。
+   ⚠️ 结构铁律仍然成立：**#muHost（音频节点）终身不动**，收/展只切 CSS 类，
+   绝不销毁重建 —— 否则又会「卡一下、从头播」。 */
+#muFloat{
+  position:absolute;right:12px;bottom:96px;z-index:70;
+  touch-action:none;user-select:none;-webkit-user-select:none;
+}
+#muFloat.hide{display:none;}
+#muFloat.dragging{box-shadow:0 14px 34px rgba(0,0,0,.32);}
+/* 音频节点容器：不可见，纯发声用（终身不动） */
+#muHost{position:absolute;width:1px;height:1px;left:-9999px;top:0;overflow:hidden;opacity:0;pointer-events:none;}
+#muHost audio{width:1px;height:1px;}
+
+/* 收起态：一颗 52px 小圆 */
+#muFloat .mu-mini{
+  position:relative;width:52px;height:52px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);
+  box-shadow:0 8px 22px rgba(0,0,0,.24),0 1px 0 rgba(255,255,255,.5) inset;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  color:var(--ink);transition:transform .16s,box-shadow .18s;
+}
+#muFloat .mu-mini:active{transform:scale(.92);}
+#muFloat .mu-mini .disc{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(140deg,var(--accent),color-mix(in srgb,var(--accent) 62%,#000));
+  color:var(--accent-ink);box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 34%,transparent);}
+#muFloat .mu-mini .disc svg{width:17px;height:17px;}
+#muFloat .mu-mini.spin .disc{animation:spin 7s linear infinite;}
+/* 小圆上的音符跳动（在播时露出来） */
+#muFloat .mu-mini .eq{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);display:flex;align-items:flex-end;gap:2px;height:9px;}
+#muFloat .mu-mini .eq i{width:2.5px;border-radius:2px;background:var(--accent);height:38%;animation:eq 1s ease-in-out infinite;}
+#muFloat .mu-mini .eq i:nth-child(2){animation-delay:.18s;}
+#muFloat .mu-mini .eq i:nth-child(3){animation-delay:.36s;}
+/* v2.24.15b：小圆右上角的「关掉浮窗」按钮 —— 不用展开面板就能收掉它。
+   默认半透明低调（不干扰音乐图标），悬停/按下才亮起来。 */
+#muFloat .mu-mini .x{
+  position:absolute;top:-4px;right:-4px;width:19px;height:19px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);color:var(--ink-2);
+  box-shadow:0 2px 6px rgba(0,0,0,.18);opacity:.55;transition:opacity .15s,transform .15s,background .15s;
+}
+#muFloat .mu-mini .x svg{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;}
+#muFloat .mu-mini .x:hover{opacity:1;background:var(--soft-2);}
+#muFloat .mu-mini .x:active{transform:scale(.88);opacity:1;}
+/* 暂停态：不转、不跳 */
+#muFloat.paused .mu-mini.spin .disc{animation:none;}
+#muFloat.paused .mu-mini .eq{display:none;}
+/* 小圆上的加载转圈 */
+#muFloat .mu-mini .ring{position:absolute;inset:-3px;border-radius:50%;border:2px solid transparent;
+  border-top-color:var(--accent);animation:spin .8s linear infinite;display:none;}
+#muFloat.loading .mu-mini .ring{display:block;}
+#muFloat.loading .mu-mini .eq{display:none;}
+
+/* 展开态：小圆缩成面板上方的「收回」按钮，下方是控制面板 */
+#muFloat .mu-panel{
+  position:absolute;right:0;bottom:60px;
+  width:212px;border-radius:18px;overflow:hidden;
+  background:var(--panel);box-shadow:0 10px 30px rgba(0,0,0,.26),0 1px 0 rgba(255,255,255,.5) inset;
+  border:1px solid var(--line);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  display:none;
+}
+#muFloat.expanded .mu-panel{display:block;animation:muPanelIn .16s ease-out;}
+@keyframes muPanelIn{from{opacity:0;transform:translateY(6px) scale(.97);}to{opacity:1;transform:none;}}
+#muFloat .mu-panel-hd{display:flex;align-items:center;gap:8px;padding:10px 12px 6px;}
+#muFloat .mu-panel-hd .ico{flex:none;color:var(--accent);display:flex;}
+#muFloat .mu-panel-hd .tx{flex:1;min-width:0;}
+#muFloat .mu-float-name{font-size:12.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#muFloat .mu-float-sub{font-size:10px;color:var(--ink-2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#muFloat .mu-panel-hd .cls{flex:none;width:24px;height:24px;border-radius:8px;border:none;background:var(--soft-2);
+  color:var(--ink-2);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;}
+#muFloat .mu-panel-hd .cls svg{width:13px;height:13px;}
+/* 进度条（真播放进度，来自 audio timeupdate） */
+#muFloat .mu-prog{display:flex;align-items:center;gap:8px;padding:2px 14px 0;}
+#muFloat .mu-prog .bar{flex:1;height:3px;border-radius:2px;background:var(--soft-2);overflow:hidden;cursor:pointer;}
+#muFloat .mu-prog .bar i{display:block;height:100%;width:0;background:var(--accent);border-radius:2px;transition:width .18s linear;}
+#muFloat .mu-prog .tm{font-size:9.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;flex:none;}
+#muFloat .mu-float-ctl{display:flex;align-items:center;justify-content:space-around;padding:6px 8px 10px;}
+#muFloat .mu-fb{
+  width:32px;height:32px;border:none;background:transparent;color:var(--ink);border-radius:11px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
+}
+#muFloat .mu-fb:active{background:var(--soft-2);transform:scale(.93);}
+#muFloat .mu-fb svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+#muFloat .mu-fb.mu-fb-main{width:38px;height:38px;background:var(--soft-2);}
+#muFloat .mu-fb.mu-fb-main svg{width:17px;height:17px;}
+#muFloat .mu-note{font-size:10px;color:var(--ink-3);text-align:center;padding:0 12px 9px;line-height:1.45;}
+/* v2.24.15b：面板底部的两个明确动作 —— 「收成小圆」与「关掉浮窗」。
+   旧版只有「收起」，用户想让它彻底消失只能删歌，所以这里把话说白。 */
+#muFloat .mu-act{display:flex;gap:8px;padding:0 12px 11px;}
+#muFloat .mu-act button{
+  flex:1;height:29px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;padding:0;
+  border:1px solid var(--line);background:var(--soft-2);color:var(--ink-2);
+  transition:background .15s,transform .12s;
+}
+#muFloat .mu-act button:active{transform:scale(.96);}
+#muFloat .mu-act .mu-close-btn{background:transparent;color:var(--ink-3);}
+#muFloat .mu-act .mu-close-btn:hover{color:var(--ink);background:var(--soft-2);}
+/* v2.24.15：歌单里的状态徽标（让用户一眼看出哪首能放、哪首为什么放不了） */
+.mu-tag{
+  display:inline-block;font-size:9.5px;font-weight:700;line-height:1.5;padding:0 5px;border-radius:6px;
+  vertical-align:1px;letter-spacing:.2px;
+}
+.mu-tag.vip{color:#b26a00;background:rgba(226,150,30,.14);border:1px solid rgba(226,150,30,.3);}
+.mu-tag.net{color:var(--ink-3);background:var(--soft-2);border:1px solid var(--line);}
+
+/* 通话（微信风格：深色沉浸） */
+#callOverlay{
+  position:absolute;inset:0;z-index:80;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:14px;overflow:hidden;
+  background:linear-gradient(180deg,#2a2a2e 0%,#202023 60%,#1a1a1d 100%);
+  animation:fadeIn .2s;
+}
+#callOverlay .call-bg-avatar{padding:9px;border-radius:50%;border:1.5px solid rgba(255,255,255,.18);box-shadow:0 14px 38px rgba(0,0,0,.5);animation:callPulse 2.4s ease-in-out infinite;}
+#callOverlay .call-bg-avatar .avatar{width:96px;height:96px;font-size:36px;}
+@keyframes callPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.045);}}
+#callOverlay .call-name{font-size:23px;font-weight:800;letter-spacing:.5px;color:#fff;}
+#callOverlay .call-state{font-size:13px;color:var(--sys);}
+#callOverlay .call-lines{height:100px;overflow:hidden;display:flex;flex-direction:column-reverse;gap:6px;align-items:center;}
+#callOverlay .call-lines div{font-size:13px;color:rgba(255,255,255,.92);background:rgba(255,255,255,.12);backdrop-filter:blur(4px);padding:7px 15px;border-radius:16px;animation:pop .3s;}
+/* 群通话：成员头像墙 */
+#callOverlay .call-members{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;max-width:300px;padding:9px;border-radius:20px;border:1.5px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);min-height:70px;align-items:center;animation:callPulse 2.4s ease-in-out infinite;}
+#callOverlay .call-mem{display:flex;flex-direction:column;align-items:center;gap:4px;}
+#callOverlay .call-mem .avatar{width:46px;height:46px;font-size:18px;border:1.5px solid rgba(255,255,255,.25);}
+#callOverlay .call-mem span{font-size:10px;color:rgba(255,255,255,.65);max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 「我」在成员墙里高亮，一眼能看出自己已加入 */
+#callOverlay .call-mem-me .avatar{border-color:rgba(120,220,150,.85);box-shadow:0 0 0 2.5px rgba(120,220,150,.28);}
+#callOverlay .call-mem-me span{color:rgba(150,235,170,.95);font-weight:700;}
+#callOverlay .call-controls{display:flex;gap:26px;margin-top:16px;align-items:center;}
+.call-ctl{
+  width:54px;height:54px;border-radius:50%;border:none;
+  background:rgba(255,255,255,.14);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:transform .1s,background .2s;
+}
+.call-ctl svg{width:22px;height:22px;stroke:#fff;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+.call-ctl.off{background:rgba(255,255,255,.4);}
+.call-ctl:active{transform:scale(.92);}
+.call-ctl-col{display:flex;flex-direction:column;align-items:center;gap:5px;}
+.call-ctl-col small{font-size:10px;color:rgba(255,255,255,.55);letter-spacing:1px;}
+.hangup{
+  width:58px;height:58px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  background:#e0443f;box-shadow:0 6px 18px rgba(224,68,63,.45);
+}
+.hangup svg{width:26px;height:26px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;}
+/* 来电：接听 / 挂断 */
+.call-btns{display:flex;gap:56px;margin-top:18px;}
+.call-col{display:flex;flex-direction:column;align-items:center;gap:7px;cursor:pointer;}
+.call-col .ring{
+  width:62px;height:62px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+}
+.call-col .ring svg{width:26px;height:26px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;}
+.call-col .ring.ok{background:#37c06f;box-shadow:0 6px 18px rgba(55,192,111,.4);animation:callRing 1.6s ease infinite;}
+.call-col .ring.no{background:#e0443f;box-shadow:0 6px 18px rgba(224,68,63,.4);}
+.call-col small{font-size:11px;color:var(--sys);letter-spacing:2px;}
+@keyframes callRing{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}
+/* 最小化悬浮气泡 */
+#callMini{
+  position:absolute;right:14px;bottom:110px;z-index:75;width:58px;height:58px;border-radius:50%;
+  background:rgba(28,28,30,.88);color:#fff;display:none;flex-direction:column;align-items:center;justify-content:center;
+  box-shadow:0 8px 20px rgba(0,0,0,.3);cursor:grab;gap:1px;touch-action:none;user-select:none;-webkit-user-select:none;
+}
+#callMini:active{cursor:grabbing;box-shadow:0 12px 28px rgba(0,0,0,.4);transform:scale(1.05);}
+#callMini .avatar{width:24px;height:24px;font-size:12px;}
+#callMini b{font-size:10px;font-weight:700;}
+.hangup{
+  width:62px;height:62px;border-radius:50%;border:none;cursor:pointer;font-size:24px;color:#fff;
+  background:#e0443f;box-shadow:0 6px 18px rgba(224,68,63,.4);margin-top:4px;
+}
+
+/* 微信朋友圈 —— 封面仿微信比例（偏宽的横幅，约占屏宽 3:2） */
+/* v2.17.0：背景 150→190px（太窄显得局促）；头像容器移出 overflow:hidden 的 cover，
+   原来头像下缘 22px 被 cover 裁掉（用户截图：头像只显示一半） */
+.wm-head{position:relative;}
+.wm-cover{height:190px;background:linear-gradient(135deg,var(--chip) 0%,#dcdce2 55%,#cbcbd3 100%);position:relative;border-radius:0 0 16px 16px;overflow:hidden;}
+.wm-cover .cover-edit{position:absolute;left:12px;top:12px;font-size:11px;font-weight:700;color:#fff;background:rgba(0,0,0,.32);backdrop-filter:blur(4px);padding:6px 11px;border-radius:14px;cursor:pointer;z-index:2;}
+.wm-cover .cover-edit:active{transform:scale(.96);}
+.wm-me{position:absolute;right:14px;bottom:-22px;display:flex;align-items:center;gap:10px;z-index:2;}
+.wm-me .nm{color:var(--ink);font-weight:800;font-size:16px;text-shadow:0 1px 6px rgba(255,255,255,.65);}
+.wm-me .avatar{border-radius:12px;border:2.5px solid var(--panel);width:64px;height:64px;font-size:26px;}
+.wm-me .avatar img{border-radius:10px;}
+.wm-post{display:flex;gap:10px;padding:16px 2px;border-bottom:1px solid var(--line);}
+.wm-post:last-child{border-bottom:none;}
+.wm-post .avatar{border-radius:10px;}
+.wm-nm{font-weight:700;color:var(--ink);font-size:14.5px;}
+.wm-txt{font-size:14.5px;line-height:1.68;margin:5px 0;white-space:pre-wrap;word-break:break-word;}
+.wm-time{font-size:12px;color:var(--ink-2);margin-top:8px;display:flex;gap:12px;align-items:center;}
+.wm-ops{margin-top:10px;background:rgba(0,0,0,.035);border-radius:12px;padding:9px 14px;display:flex;gap:20px;font-size:13px;color:var(--ink-2);}
+.wm-ops span{cursor:pointer;}
+.wm-stk{font-size:58px;line-height:1.35;margin-top:4px;}
+.wm-stk img{max-width:150px;border-radius:10px;display:block;}
+/* v2.17.0：评论字号 15(继承)→12.5px、行距 1.9、行间细分隔线（用户两轮反馈字大行密） */
+.wm-feed .cmt{background:rgba(0,0,0,.035);font-size:12.5px;line-height:1.9;border-radius:12px;padding:8px 12px;color:var(--ink-2);}
+.wm-feed .cmt .cmt-like{padding:1px 0 5px;}
+.wm-feed .cmt .cmt-line{padding:3px 0;display:flex;align-items:baseline;flex-wrap:wrap;}
+.wm-feed .cmt .cmt-line + .cmt-line{border-top:1px solid var(--line);}
+.wm-feed .cmt .cmt-rp{font-style:normal;color:var(--ink-3);}
+.wm-feed .cmt .cmt-ract{font-size:11px;color:#576b95;cursor:pointer;margin-left:auto;padding-left:10px;flex:none;}
+.wm-feed .cmt .cmt-ract:active{opacity:.6;}
+.wm-feed .cmt b{font-weight:700;color:var(--ink);}
+
+/* 塔罗牌 */
+.tarot-card{
+  width:150px;height:225px;margin:14px auto 10px;border-radius:16px;
+  background:var(--cover-grad);box-shadow:0 12px 28px rgba(0,0,0,.14);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  animation:pop .35s;border:1px solid var(--line);
+}
+.tarot-card.rev{transform:rotate(180deg);}
+.tarot-card .em{font-size:52px;}
+
+/* 已读标记 —— 原来 10px/--ink-3 太浅 */
+.read-tag{font-size:11.5px;color:var(--ink-2);align-self:flex-end;margin:0 3px 5px;flex:none;font-weight:500;}
+/* 经期月历标记 */
+.cal-day.pd-start{background:var(--accent);color:var(--accent-ink);font-weight:700;}
+.cal-day.pd-window{background:var(--pink);}
+.cal-day.pd-end{background:#e9a5c9;color:#7a2a52;font-weight:700;}
+.cal-day.pd-start.pd-end{background:var(--accent);color:var(--accent-ink);}
+.cal-day.pd-pred{box-shadow:inset 0 0 0 1.5px var(--accent);border-radius:12px;}
+.cal-day.pd-pred::after{content:'';position:absolute;top:4px;right:4px;width:5px;height:5px;border-radius:50%;background:var(--accent);}
+/* 日历选中态 */
+.cal-day.sel{outline:2px solid var(--accent);outline-offset:-2px;}
+
+/* ============ 集市 ============ */
+.goods-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+.goods{
+  background:var(--panel);border-radius:18px;box-shadow:var(--shadow);padding:14px;
+  display:flex;flex-direction:column;gap:6px;align-items:center;text-align:center;
+}
+.goods .em{font-size:34px;}
+.goods .nm{font-size:13px;font-weight:700;}
+.goods .pr{font-size:12px;color:var(--ink-2);}
+.cart-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);}
+
+/* ============ 日历 ============ */
+.cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.cal-head .mon{font-size:17px;font-weight:800;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;}
+.cal-grid .wd{font-size:11px;color:var(--ink-3);padding:6px 0;}
+.cal-day{
+  aspect-ratio:1;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-size:13px;cursor:pointer;position:relative;background:transparent;border:none;color:var(--ink);font-family:inherit;
+}
+.cal-day.other{color:var(--ink-3);opacity:.45;}
+.cal-day.today{background:var(--accent);color:var(--accent-ink);font-weight:700;}
+.cal-day.hasnote::after{content:'';position:absolute;bottom:5px;width:4px;height:4px;border-radius:50%;background:var(--ink-2);}
+
+/* ============ 小游戏 ============ */
+.game-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;}
+.game-tile{
+  background:var(--panel);border-radius:18px;box-shadow:var(--shadow);padding:18px;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:8px;font-size:13px;font-weight:700;
+}
+.game-tile .em{font-size:30px;}
+.rps-row{display:flex;justify-content:space-around;margin:18px 0;}
+.rps-hand{font-size:40px;cursor:pointer;padding:12px;border-radius:18px;background:var(--panel);box-shadow:var(--shadow);border:none;transition:transform .1s;}
+.rps-hand:active{transform:scale(.9);}
+.game-canvas{display:block;margin:10px auto;border-radius:14px;background:var(--panel);box-shadow:var(--shadow);}
+.pad{display:flex;justify-content:center;gap:14px;margin-top:12px;}
+.pad button{
+  width:60px;height:60px;border-radius:18px;border:none;background:var(--panel);box-shadow:var(--shadow);
+  font-size:22px;line-height:1;cursor:pointer;color:var(--ink);
+  transition:transform .08s,box-shadow .08s;touch-action:manipulation;-webkit-user-select:none;user-select:none;
+}
+.pad button:active{transform:scale(.88);box-shadow:none;}
+.pad button.hit{background:var(--soft);transform:scale(.9);}
+/* 十字方向盘（贪吃蛇 / 俄罗斯方块共用） */
+.pad.sn-dpad,.pad.tz-dpad{display:grid;grid-template-columns:repeat(3,60px);grid-auto-rows:60px;gap:8px;justify-content:center;}
+.pad.sn-dpad>span,.pad.tz-dpad>span{
+  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--muted,#9a9aa2);
+}
+.pad.tz-dpad button{font-size:17px;font-weight:700;}
+.pad.tz-dpad button small{display:block;font-size:9px;font-weight:600;opacity:.55;margin-top:1px;}
+/* v2.24.22（用户反馈：「贪吃蛇方向键占位太大」）：
+   原来一套十字键是 3×60 + 2×8 = 196px 见方，手机上一屏被它吃掉将近四分之一。
+   缩到 3×48 + 2×6 = 156px 见方（省掉 40px 高 / 40px 宽），
+   48px 仍高于 44px 的触摸目标下限，拇指盲按不会打偏；棋盘与按钮之间的留白同步收紧。
+   俄罗斯方块的操作盘维持原尺寸不动 —— 它那半盘按钮有 5 个、还带小字，缩了会难按。 */
+.pad.sn-dpad{
+  --snkey:48px;
+  grid-template-columns:repeat(3,var(--snkey));   /* 列宽也要跟着缩，否则格子仍是 60px、白缩 */
+  grid-auto-rows:var(--snkey);
+  gap:6px;margin-top:8px;
+}
+.pad.sn-dpad button{width:var(--snkey);height:var(--snkey);border-radius:15px;font-size:19px;}
+.pad.sn-dpad>span{font-size:11px;}
+
+/* ============ 双人俄罗斯方块（v2.24.20 新增） ============ */
+#tzWrap{position:relative;display:flex;justify-content:center;margin:10px auto;}
+#tzCv{display:block;border-radius:14px;background:var(--panel);box-shadow:var(--shadow);max-width:100%;height:auto;}
+#tzMsg{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  border-radius:14px;background:rgba(255,255,255,.86);backdrop-filter:blur(3px);
+  font-size:15px;font-weight:800;color:var(--ink);text-align:center;padding:16px;line-height:1.7;
+}
+#tzMsg.hide{display:none;}
+.tz-pill{
+  display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;
+  font-size:12px;font-weight:700;background:var(--soft);color:var(--ink);
+}
+.tz-dot{width:9px;height:9px;border-radius:3px;display:inline-block;}
+.mem-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;max-width:340px;margin:0 auto;}
+.mem-cell{
+  aspect-ratio:1;border-radius:14px;background:var(--panel);box-shadow:var(--shadow);
+  font-size:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;
+}
+.mem-cell.open{background:var(--warm);}
+.mem-cell.done{background:var(--cool);opacity:.6;cursor:default;}
+/* ===== 五子棋棋盘（v2.24.20：标准 9 路棋盘，棋子落在线的交叉点上） =====
+   做法：棋盘画 9 条竖线 + 9 条横线，线的交叉点位于 (i*34+22, j*34+22)；
+   落子按钮是一个 9×9 的透明网格，每个格子 34px，
+   左/上内边距 = 22−17 = 5px，正好让「格子中心」= 交叉点。 */
+.gomoku{
+  --gc:34px; --gpad:5px; --gline:22px;
+  position:relative;width:calc(var(--gc)*9 + var(--gpad)*2);height:calc(var(--gc)*9 + var(--gpad)*2);
+  margin:14px auto;padding:var(--gpad);border-radius:12px;background:#e5c89d;
+  box-shadow:0 2px 10px rgba(120,88,48,.22);box-sizing:content-box;
+}
+/* v2.24.20：窄屏（≤360px）自动缩格，保证棋盘完整可见（34 → 32，交叉点同步 20/4） */
+@media (max-width:360px){
+  .gomoku{--gc:32px;--gpad:4px;--gline:20px;}
+  .gomoku button::after{width:25px;height:25px;}
+}
+/* v2.24.20：矮屏（横屏 / 小窗）缩格，避免棋盘顶掉操作区 */
+@media (max-height:660px){
+  .gomoku{--gc:30px;--gpad:3px;--gline:18px;}
+  .gomoku button::after{width:23px;height:23px;}
+}
+.gomoku .gk-lines{position:absolute;inset:0;pointer-events:none;}
+.gomoku .gk-grid{
+  position:relative;display:grid;grid-template-columns:repeat(9,var(--gc));grid-template-rows:repeat(9,var(--gc));
+}
+.gomoku button{
+  width:var(--gc);height:var(--gc);border:none;background:transparent;cursor:pointer;
+  padding:0;display:flex;align-items:center;justify-content:center;
+}
+.gomoku button::after{
+  content:'';width:26px;height:26px;border-radius:50%;display:block;transition:transform .08s;
+}
+.gomoku button:hover::after{background:rgba(28,28,30,.10);}
+.gomoku button.b::after{background:#1c1c1e;box-shadow:0 1px 3px rgba(0,0,0,.45);}
+.gomoku button.w::after{background:#fdfdfd;box-shadow:0 1px 3px rgba(0,0,0,.28),inset 0 0 0 1px rgba(0,0,0,.06);}
+.gomoku button.last::after{outline:2px solid #e0443f;outline-offset:1px;}
+.gomoku button.last.b::after{box-shadow:0 0 0 2px rgba(224,68,63,.55),0 1px 3px rgba(0,0,0,.45);}
+
+/* ============ 朋友圈 ============ */
+.mom{
+  background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-bottom:12px;
+}
+.mom .head{display:flex;gap:10px;align-items:center;margin-bottom:8px;}
+.mom .txt{font-size:14.5px;line-height:1.68;white-space:pre-wrap;word-break:break-word;}
+.mom .ops{display:flex;gap:16px;margin-top:12px;font-size:13px;color:var(--ink-2);}
+.mom .ops span{cursor:pointer;}
+/* 评论区（点赞 + 评论）—— 原来 12px 挤在一起，加大字号与行距 */
+.mom .cmt{background:var(--soft-2);border-radius:12px;padding:10px 13px;font-size:13px;margin-top:10px;line-height:1.85;letter-spacing:.02em;}
+.mom .cmt b{font-weight:700;color:var(--ink);}
+.mom .cmt .cmt-line{padding:3px 0;}
+.mom .cmt .cmt-line + .cmt-line{border-top:1px solid var(--line);}
+.mom .cmt .cmt-like{padding:2px 0 4px;}
+
+/* ============ 心情 / 纪念日 / 信箱 / 问卷 / 灯塔 ============ */
+.mood-pick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+.mood-pick span{font-size:26px;cursor:pointer;padding:6px;border-radius:12px;}
+.mood-pick span.sel{background:var(--warm);box-shadow:var(--shadow);}
+.ann-days{font-size:26px;font-weight:800;color:var(--accent);}
+.tracking-ring{
+  width:150px;height:150px;border-radius:50%;margin:16px auto;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:4px;position:relative;box-shadow:var(--shadow);
+}
+.tracking-ring::before{content:'';position:absolute;inset:10px;border-radius:50%;background:var(--panel);}
+.tracking-ring .val{position:relative;font-size:22px;font-weight:800;}
+.tracking-ring .lab{position:relative;font-size:11px;color:var(--ink-2);}
+.fortune{text-align:center;padding:26px 16px;}
+.fortune .lv{font-size:26px;font-weight:800;margin:8px 0;}
+.fortune .tx{font-size:14px;color:var(--ink-2);line-height:1.8;}
+
+/* 问卷 */
+.q-card{background:var(--panel);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;margin-bottom:12px;}
+.q-card .q{font-size:15px;font-weight:700;line-height:1.6;margin-bottom:12px;}
+.seg{display:flex;background:var(--chip);border-radius:14px;padding:4px;margin-bottom:14px;}
+.seg button{flex:1;border:none;background:transparent;padding:9px;border-radius:11px;font-size:13px;cursor:pointer;color:var(--ink-2);font-family:inherit;}
+.seg button.on{background:var(--panel);font-weight:700;color:var(--ink);box-shadow:var(--shadow);}
+/* 设置页专用 seg：字卡库药丸风格 + 线性图标（v2.17.0 重做，替换原描边小方块 tbtn） */
+.seg.set-seg{border-radius:16px;padding:4px;gap:2px;}
+.seg.set-seg button{
+  display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 2px 7px;
+  font-size:10.5px;font-weight:600;letter-spacing:.02em;color:var(--ink-3);border-radius:12px;
+  transition:color .15s,background .15s;
+}
+.seg.set-seg button svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+.seg.set-seg button.on{color:var(--ink);font-weight:800;}
+/* 顶部功能方块导航（主题页 / 设置页共用） */
+.tabbar{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:8px;
+  background:var(--chip);border-radius:18px;padding:8px;margin-bottom:14px;
+}
+.tabbar.four{grid-template-columns:repeat(4,1fr);}
+.tabbar.six{grid-template-columns:repeat(6,1fr);}
+.tabbar.three{grid-template-columns:repeat(3,1fr);}
+.tabbar .tbtn{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  border:none;background:transparent;border-radius:13px;padding:9px 2px;cursor:pointer;
+  color:var(--ink-2);font-family:inherit;transition:background .15s,color .15s,box-shadow .15s;
+  min-height:56px;
+}
+.tabbar .tbtn .ti{font-size:19px;line-height:1;font-style:normal;}
+.tabbar .tbtn .tn{font-size:10px;line-height:1.2;font-weight:600;white-space:nowrap;}
+.tabbar .tbtn.on{background:var(--panel);color:var(--ink);font-weight:800;box-shadow:var(--shadow);}
+.tabbar .tbtn:active{transform:scale(.96);}
+.tab-head{display:flex;align-items:center;gap:9px;margin:2px 0 12px;}
+.tab-head .th-back{
+  border:none;background:var(--chip);color:var(--ink-2);cursor:pointer;font-family:inherit;
+  width:30px;height:30px;border-radius:10px;font-size:15px;line-height:1;flex:none;
+}
+.tab-head .th-title{font-size:15px;font-weight:800;color:var(--ink);}
+.tab-head .th-sub{font-size:11px;color:var(--ink-3);margin-left:auto;}
+
+/* ============ 导出数据弹窗 ============ */
+.exp-sec{font-size:11px;font-weight:800;color:var(--ink-3);margin:14px 0 6px;letter-spacing:.05em;}
+.exp-row{
+  display:flex;gap:10px;align-items:flex-start;cursor:pointer;
+  padding:10px 12px;border:1.5px solid var(--line);border-radius:13px;background:var(--soft);
+  margin-bottom:8px;transition:border-color .15s,background .15s;
+}
+.exp-row:active{transform:scale(.99);}
+.exp-row input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent);flex:none;cursor:pointer;}
+.exp-row .name{font-size:13.5px;font-weight:600;color:var(--ink);}
+.exp-row .meta{font-size:11px;color:var(--ink-3);margin-top:2px;line-height:1.5;}
+.exp-row .count{font-size:10px;color:var(--ink-3);font-weight:600;margin-left:4px;}
+
+/* ============ 表情包 ============ */
+.stk-panel{
+  padding:12px 14px calc(env(safe-area-inset-bottom) + 12px);
+  background:var(--bar-2);border-top:1px solid var(--line);flex:none;
+  max-height:250px;overflow-y:auto;
+}
+.stk-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.stk-head .t{font-size:12px;font-weight:700;color:var(--ink-2);}
+.stk-head button{border:none;background:transparent;font-size:12px;color:var(--ink-2);cursor:pointer;}
+.stk-head button.on{color:var(--ink);font-weight:700;}
+.stk-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
+.stk{
+  aspect-ratio:1;border-radius:12px;background:var(--panel);box-shadow:var(--shadow);
+  display:flex;align-items:center;justify-content:center;font-size:24px;
+  cursor:pointer;position:relative;overflow:hidden;border:1px solid var(--line);
+}
+.stk img{width:100%;height:100%;object-fit:cover;}
+.stk .delx{position:absolute;top:2px;right:2px;background:rgba(28,28,30,.6);color:#fff;border-radius:50%;width:18px;height:18px;font-size:10px;display:flex;align-items:center;justify-content:center;}
+.stk.add{border:1.5px dashed var(--ink-3);background:transparent;box-shadow:none;color:var(--ink-3);font-size:22px;}
+/* v2.22.0：表情包消息不再套气泡（无背景 / 无内边距），直接展示表情本身 */
+.stk-b{background:none;padding:0;border:none;box-shadow:none;max-width:132px;}
+.stk-b .stk-em{font-size:52px;line-height:1.25;display:block;}
+.stk-b img{max-width:112px;max-height:112px;display:block;border-radius:12px;}
+
+/* ============ 气泡 / 字体选择面板 ============ */
+.bub-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.bub-card{
+  border:1.5px solid var(--line);border-radius:14px;padding:9px;cursor:pointer;
+  background:var(--soft);transition:border-color .15s,background .15s;
+  position:relative;
+}
+.bub-card.sel{border-color:var(--accent);border-width:2.5px;background:var(--panel);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent);}
+.bub-on{
+  position:absolute;top:5px;right:5px;z-index:2;
+  font-size:9px;font-weight:800;line-height:1;padding:3px 7px;border-radius:9px;
+  background:var(--accent);color:var(--accent-ink);
+  box-shadow:0 1px 4px rgba(0,0,0,.18);
+}
+.bub-demo{
+  border-radius:12px;padding:9px 11px;font-size:12px;color:var(--accent-ink);
+  min-height:52px;display:flex;align-items:center;line-height:1.55;word-break:break-word;
+}
+.bub-nm{font-size:11px;font-weight:700;color:var(--ink);margin-top:7px;text-align:center;}
+.bub-nm .count{font-size:9px;color:var(--ink-3);margin-left:4px;}
+.font-row{
+  display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;cursor:pointer;
+  border:1.5px solid var(--line);background:var(--soft);
+}
+.font-row.sel{border-color:var(--accent);background:var(--panel);}
+.font-demo{flex:1;font-size:14px;color:var(--ink);min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.font-nm{font-size:11px;color:var(--ink-2);flex:none;}
+
+/* ============ 设置：保存条（改动需点「保存」才生效，防误触） ============ */
+#saveBar{
+  position:absolute;left:0;right:0;bottom:0;z-index:60;
+  transform:translateY(120%);transition:transform .28s cubic-bezier(.22,.9,.3,1);
+  background:var(--bar-2);backdrop-filter:blur(14px);
+  border-top:1px solid var(--line);
+  padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);
+  box-shadow:0 -6px 22px rgba(0,0,0,.12);
+  display:flex;align-items:center;gap:10px;
+}
+#saveBar.on{transform:translateY(0);}
+#saveBar .sb-txt{flex:1;min-width:0;}
+#saveBar .sb-t1{font-size:13px;font-weight:800;color:var(--ink);}
+#saveBar .sb-t2{font-size:11px;color:var(--ink-2);margin-top:2px;}
+#saveBar button{border:none;cursor:pointer;font-family:inherit;border-radius:14px;font-size:14px;font-weight:700;}
+#saveBar .sb-save{flex:none;padding:11px 22px;background:var(--accent);color:var(--accent-ink);}
+#saveBar .sb-save[disabled]{opacity:.45;cursor:default;}
+#saveBar .sb-undo{flex:none;padding:11px 14px;background:var(--chip);color:var(--ink);font-weight:600;font-size:13px;}
+/* 改动项微提示 */
+.pending-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#e0a03f;margin-left:5px;vertical-align:middle;}
+
+/* ============ 设置：我的资料（v2.23.0 重做；v2.24.0：昵称虚线框 + 头像/提示上下分离） ============ */
+.my-profile{
+  display:flex;gap:16px;align-items:flex-start;margin-top:12px;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--glass-1) 90%,transparent),transparent 72%);
+  border:1px solid var(--glass-line);border-radius:18px;padding:16px 14px;
+}
+.my-ava{position:relative;cursor:pointer;flex:none;display:flex;flex-direction:column;align-items:center;gap:9px;padding:2px;}
+.my-ava .avatar{width:62px;height:62px;font-size:24px;box-shadow:var(--shadow);outline:2px solid var(--accent);outline-offset:2px;border-radius:20px;}
+.my-ava .avatar img{border-radius:17px;}
+.my-ava .cam{
+  position:absolute;right:-3px;top:-3px;width:23px;height:23px;border-radius:50%;
+  background:var(--accent);color:var(--accent-ink);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 7px rgba(0,0,0,.25);border:2px solid var(--panel);z-index:2;
+}
+.my-ava .cam svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round;}
+.my-ava:active{transform:scale(.95);}
+.my-ava-hint{font-size:11px;color:var(--ink-2);font-weight:600;display:inline-flex;align-items:center;gap:3px;line-height:1;}
+.my-ava-hint svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+/* v2.24.0：昵称输入框虚线边框 —— 让「可修改」看得见 */
+.my-profile .field input{
+  border:1.5px dashed var(--ink-3);background:transparent;font-weight:700;font-size:15.5px;border-radius:12px;
+}
+.my-profile .field input:focus{border-color:var(--accent);border-style:solid;background:var(--panel);}
+.my-nm input{font-weight:800;font-size:15.5px;}
+.my-meta{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-2);margin-top:2px;}
+.my-meta svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+/* v2.24.0：题库挑选列表（替代原生 select，字号与配色可控） */
+.qbank-list{max-height:210px;overflow-y:auto;border:1px solid var(--line);border-radius:14px;background:var(--soft);display:flex;flex-direction:column;}
+.qbank-item{
+  padding:9px 13px;font-size:13px;color:var(--ink);line-height:1.55;cursor:pointer;
+  border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;
+}
+.qbank-item:last-child{border-bottom:none;}
+.qbank-item:active{background:var(--soft-2);}
+.qbank-item.on{background:color-mix(in srgb,var(--accent) 10%,var(--soft));color:var(--accent);font-weight:700;}
+.qbank-item.on::after{content:'✓';margin-left:auto;font-weight:800;}
+/* v2.24.0：下拉框整体收小一号，浅色描边（题库/联系人选择不再突兀） */
+.field select{font-size:13.5px;color:var(--ink);background:var(--panel);}
+
+/* ============ 通用弹窗 ============ */
+.modal-mask{
+  position:absolute;inset:0;z-index:200;background:rgba(42,40,38,.38);
+  display:flex;align-items:center;justify-content:center;animation:fadeIn .18s;
+}
+.modal{
+  width:82%;max-width:330px;max-height:86%;overflow-y:auto;
+  background:var(--panel);border-radius:20px;padding:18px;
+  box-shadow:0 20px 60px rgba(0,0,0,.25);animation:pop .22s;
+  -webkit-overflow-scrolling:touch;
+}
+.modal .m-title{font-weight:800;font-size:15px;margin-bottom:12px;text-align:center;}
+.modal .m-btns{display:flex;gap:10px;margin-top:14px;}
+.modal .m-btns button{flex:1;padding:10px;border:none;border-radius:12px;font-size:14px;cursor:pointer;font-family:inherit;}
+.modal .m-cancel{background:var(--skel);color:var(--ink-2);}
+.modal .m-ok{background:var(--ink);color:#fff;font-weight:700;}
+.modal .gm-row{display:flex;align-items:center;gap:9px;padding:7px 2px;font-size:14px;border-bottom:1px solid var(--line);}
+.modal .stk.sel{outline:2.5px solid var(--ink);outline-offset:1px;}
+
+/* ============ 开屏页：彤话屿（原创 · 极简线条「一座小岛」） ============ */
+#splash{
+  position:absolute;inset:0;z-index:300;overflow:hidden;cursor:pointer;
+  background:var(--splash-bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  transition:background .35s ease;
+}
+#splash.out{opacity:0;transition:opacity .7s ease;pointer-events:none;}
+/* v2.24.12：被须知 / 口令门「按住」时，开屏页只做背景，不再吃点击（防止在它背后偷偷进入网站） */
+#splash.hold{pointer-events:none;}
+/* 小岛：v2.24.21 重绘（分层更细）· 环上一艘小帆船绕岛航行，随浪起伏 */
+.sp-ring-wrap{position:relative;width:150px;height:150px;opacity:0;animation:spUp .9s ease .15s forwards;}
+.sp-island{position:absolute;inset:0;width:100%;height:100%;overflow:visible;}
+.sp-island .ln{fill:none;stroke:#242424;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+.sp-island .ln-thin{fill:none;stroke:#242424;stroke-width:1.15;stroke-linecap:round;stroke-linejoin:round;opacity:.7;}
+.sp-island .ln-fill{fill:#242424;stroke:none;}
+.sp-island .isl{animation:spFloat 4.6s ease-in-out infinite;transform-origin:75px 96px;}
+@keyframes spFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-3.5px);}}
+.sp-island .wv{animation:spWave 5s ease-in-out infinite;}
+.sp-island .wv2{animation:spWave 5s ease-in-out infinite;animation-delay:1.5s;}
+.sp-island .wv3{animation:spWave 5.6s ease-in-out infinite;animation-delay:2.7s;}
+@keyframes spWave{0%,100%{transform:translateX(0);}50%{transform:translateX(-9px);}}
+.sp-island .cld{animation:spCloud 13s ease-in-out infinite;}
+.sp-island .cld2{animation:spCloud 16s ease-in-out infinite;animation-delay:3s;}
+@keyframes spCloud{0%,100%{transform:translateX(0);}50%{transform:translateX(5px);}}
+.sp-island .brd{animation:spBird 6.5s ease-in-out infinite;}
+.sp-island .brd2{animation:spBird 6.5s ease-in-out infinite;animation-delay:2.4s;}
+@keyframes spBird{0%,55%{opacity:0;}10%,45%{opacity:.85;}75%{transform:translate(18px,-7px);opacity:0;}100%{transform:translate(26px,-10px);opacity:0;}}
+/* 轨道本身自转；船体反向自转保持正立；中间那层做上下起伏 —— 合起来就是「绕岛航行 + 随浪起伏」 */
+.sp-orbit{position:absolute;inset:-4px;animation:spin 19s linear infinite;}
+.sp-boat-bob{position:absolute;top:-3px;left:50%;margin-left:-12px;width:24px;height:24px;
+  animation:spBob 3.4s ease-in-out infinite;}
+@keyframes spBob{0%,100%{transform:translateY(0);}50%{transform:translateY(3px);}}
+.sp-boat{display:block;width:24px;height:24px;animation:spin 19s linear infinite reverse;}
+.sp-boat svg{display:block;width:24px;height:24px;animation:spRoll 3.4s ease-in-out infinite;}
+@keyframes spRoll{0%,100%{transform:rotate(-6deg);}50%{transform:rotate(6deg);}}
+.sp-boat path{fill:none;stroke:#242424;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;}
+/* 标题：墨色衬线字（v2.17.0 二次加固：去掉逐字 span 动画，改纯文本整块进场 ——
+   逐字 inline-block + animation-delay 组合在部分 XWeb 内核 / 旧缓存下会三字叠印成一坨，
+   纯文本节点不存在任何可叠印的合成层） */
+.sp-title-wrap{text-align:center;margin-top:28px;opacity:0;animation:fadeIn 1s ease .95s forwards;}
+.sp-title{
+  font-family:"Songti SC","STSong","Source Han Serif SC","Noto Serif SC",Georgia,"Times New Roman",serif;
+  font-size:41px;font-weight:600;letter-spacing:16px;text-indent:16px;
+  color:#2b2b2b;line-height:1.25;white-space:nowrap;
+}
+.sp-sub{
+  font-size:10px;letter-spacing:6.5px;text-indent:6.5px;color:var(--splash-dim);margin-top:14px;
+  opacity:0;animation:fadeIn .9s ease 1.8s forwards;
+}
+/* 细墨线进度 */
+.sp-line-bar{
+  width:150px;height:1.5px;background:var(--splash-line);border-radius:1px;overflow:hidden;margin-top:34px;
+  opacity:0;animation:fadeIn .6s ease 2s forwards;
+}
+.sp-line-in{height:100%;width:0;background:#242424;animation:spProg 2.8s ease .2s forwards;}
+@keyframes spProg{to{width:100%;}}
+/* 轻触进入 */
+.sp-touch{
+  margin-top:26px;font-size:12px;letter-spacing:6px;color:var(--splash-txt);font-weight:600;
+  opacity:0;animation:spTouch 2.4s ease 2.4s infinite;
+}
+@keyframes spTouch{0%{opacity:0;}25%{opacity:.9;}70%{opacity:.55;}100%{opacity:0;}}
+.sp-remember{
+  display:flex;align-items:center;gap:6px;margin-top:12px;
+  font-size:11px;color:var(--splash-dim);letter-spacing:1px;
+  opacity:0;animation:fadeIn .9s ease 2.8s forwards;
+}
+.sp-remember input{accent-color:#242424;}
+/* 底部潮汐细线 */
+.sp-tide{
+  position:absolute;bottom:36px;left:0;width:100%;height:34px;
+  opacity:0;animation:spTideIn 1.2s ease 2.1s forwards;
+}
+@keyframes spTideIn{to{opacity:.85;}}
+.sp-tide path{animation:spTide 5s ease-in-out infinite;}
+.sp-tide path.t2{animation-delay:1.4s;}
+@keyframes spTide{0%,100%{transform:translateX(0);}50%{transform:translateX(-14px);}}
+.sp-tide .l1{stroke:var(--splash-line);}
+.sp-tide .l2{stroke:var(--splash-line);}
+@keyframes spUp{from{opacity:0;transform:translateY(24px);}to{opacity:1;transform:none;}}
+@keyframes spin{to{transform:rotate(360deg);}}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.45;transform:scale(.82);}}
+@media (prefers-reduced-motion:reduce){
+  #splash *{animation-duration:.01s !important;animation-delay:0s !important;}
+}
+
+/* ============ 网站须知（v2.24.11 · 首次进入 / 每次更新 强制阅读） ============ */
+#noticeLayer{
+  position:absolute;inset:0;z-index:350;display:none;   /* v2.24.12：搬进 #phone，只遮手机屏；350 压过 #splash(300) */
+  background:transparent;                 /* 不再自带底色 —— 开屏页就在它下面，两层叠加 */
+  align-items:center;justify-content:center;padding:22px;
+}
+#noticeLayer.on{display:flex;animation:ntFade .5s ease;}
+/* v2.24.12：须知卡压住其下的开屏页（半透明玻璃感），只遮手机屏宽、不透出桌面
+   注意：下面 .nt-card 有 background:var(--panel)（不透明），本覆盖必须写在它之后才生效，
+   所以 #phone .nt-card 的规则放在本段 CSS 末尾（见「玻璃底色收尾」）。 */
+#noticeLayer .nt-card{margin:auto;}
+html[data-theme="dark"] #phone .nt-card{background:rgba(24,24,28,.82);}
+@keyframes ntFade{from{opacity:0}to{opacity:1}}
+.nt-card{
+  width:100%;max-width:430px;max-height:88vh;display:flex;flex-direction:column;
+  background:var(--panel);border-radius:20px;overflow:hidden;
+  box-shadow:0 18px 50px rgba(0,0,0,.18);border:1px solid var(--line);
+}
+.nt-head{padding:22px 22px 12px;text-align:center;flex:0 0 auto;position:relative;}
+.nt-ring{
+  width:46px;height:46px;border-radius:50%;margin:0 auto 10px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:19px;font-weight:800;color:#fff;letter-spacing:1px;
+  background:var(--splash-grad);
+}
+.nt-title{font-size:17px;font-weight:800;color:var(--ink);letter-spacing:.5px;}
+.nt-sub{font-size:11px;letter-spacing:4px;color:var(--ink-3);margin-top:6px;}
+/* v2.24.12：作者署名（顶部 / 底部各一处） */
+.nt-author{font-size:11.5px;color:var(--ink-3);margin-top:9px;letter-spacing:.3px;}
+.nt-author b{color:var(--ink-2);font-weight:800;}
+.nt-author-foot{
+  margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);text-align:center;
+}
+.nt-body{
+  flex:1 1 auto;overflow-y:auto;padding:4px 22px 8px;
+  -webkit-overflow-scrolling:touch;
+}
+.nt-p{
+  font-size:13px;line-height:1.85;color:var(--ink-2);margin-bottom:11px;
+  text-align:justify;
+}
+.nt-p b{color:var(--ink);font-weight:800;}
+.nt-p .nt-h{display:block;font-size:12.5px;font-weight:800;color:var(--ink);margin-bottom:2px;}
+.nt-hr{height:1px;background:var(--line);margin:13px 0;}
+.nt-foot{flex:0 0 auto;padding:12px 22px 20px;border-top:1px solid var(--line);background:var(--panel);}
+.nt-check{
+  display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-2);
+  cursor:pointer;user-select:none;margin-bottom:12px;
+}
+.nt-check input{
+  width:17px;height:17px;flex:0 0 auto;cursor:pointer;accent-color:var(--accent);
+}
+.nt-btn{
+  width:100%;padding:13px;border:none;border-radius:13px;
+  font-size:14.5px;font-weight:800;letter-spacing:1px;cursor:pointer;
+  color:var(--accent-ink);background:var(--accent);
+  transition:opacity .25s ease,filter .25s ease;
+}
+.nt-btn[disabled]{
+  opacity:.42;cursor:not-allowed;filter:grayscale(.35);
+}
+.nt-remain{font-variant-numeric:tabular-nums;}
+/* ===== v2.24.12 玻璃底色收尾（必须放在 .nt-card / .nt-foot 之后才盖得住）===== */
+#phone .nt-card{
+  background:var(--nt-card-bg);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+}
+#phone .nt-head,#phone .nt-foot{background:transparent;}
+
+/* ============ 引用回复 / @提及 ============ */
+.quote-block{
+  border-left:3px solid var(--ink-3);background:rgba(0,0,0,.05);border-radius:8px;
+  padding:5px 9px;margin-bottom:6px;font-size:12px;color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;
+}
+.row.me .quote-block{border-left-color:var(--sys);background:rgba(255,255,255,.15);color:rgba(255,255,255,.85);}
+.at-tag{color:#4a7dbd;font-weight:700;}
+.row.me .at-tag{color:#ffd9a0;}
+
+/* ============ 朋友圈线性图标操作 ============ */
+.wm-ops span{display:inline-flex;align-items:center;gap:4px;}
+.wm-ops svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+.wm-ops span.liked svg{fill:#e0443f;stroke:#e0443f;}
+.sp-letter{z-index:3;}
+
+/* ============ 分享控制层（下线 / 口令门） ============ */
+#gateLayer{
+  position:fixed;inset:0;z-index:999999;display:none;align-items:center;justify-content:center;
+  background:var(--bg);color:var(--ink);padding:24px;
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
+}
+#gateLayer.on{display:flex;}
+.gate-card{width:100%;max-width:330px;text-align:center;}
+.gate-ring{
+  width:74px;height:74px;border-radius:50%;border:1.5px solid #1c1c1e;margin:0 auto 22px;
+  display:flex;align-items:center;justify-content:center;font-size:26px;color:#1c1c1e;
+}
+.gate-title{font-size:19px;font-weight:800;letter-spacing:2px;margin-bottom:8px;}
+.gate-desc{font-size:13px;line-height:1.8;color:#8a8a8f;margin-bottom:22px;}
+.gate-in{
+  width:100%;height:46px;border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);
+  padding:0 16px;font-size:15px;outline:none;text-align:center;letter-spacing:2px;
+}
+.gate-in:focus{border-color:var(--ink);}
+.gate-btn{
+  width:100%;height:46px;margin-top:12px;border:0;border-radius:14px;background:var(--accent);color:var(--accent-ink);
+  font-size:15px;font-weight:600;cursor:pointer;
+}
+.gate-err{font-size:12px;color:#e0443f;height:16px;margin-top:10px;}
+/* v2.24.13：暗号线索 —— 只给一句（v2.24.15 起第二级线索已删除） */
+.gate-hint-label{
+  font-size:10.5px;letter-spacing:3px;color:#b9b9bf;margin:22px 0 10px;
+  display:flex;align-items:center;gap:10px;justify-content:center;
+}
+.gate-hint-label::before,.gate-hint-label::after{content:"";height:1px;width:26px;background:var(--line);}
+.gate-hint{
+  font-size:12.5px;line-height:1.95;color:var(--ink-2);letter-spacing:.4px;
+  padding:11px 14px;border-radius:12px;background:rgba(127,127,140,.08);
+  border:1px solid var(--line);margin-top:8px;text-align:center;
+}
+.gate-hint.in{animation:gateHintIn .5s ease both;}
+@keyframes gateHintIn{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:none;}}
+.gate-foot{font-size:11px;color:#b9b9bf;margin-top:26px;letter-spacing:1px;}
+
+/* ============ v2.24.22 · iOS 输入框防放大（自适应收口） ============
+   真凶：iOS Safari 只要聚焦一个 font-size < 16px 的 input / textarea / select，
+   就会把整个视口放大一档（大约 ×1.3），而且失焦后**不会自动缩回** ——
+   用户看到的就是「有时候页面自己变大变小了」。把 viewport 锁死只能挡住手动捏合，
+   挡不住这个自动放大，必须在字号上治根。
+   这里放在样式表最末尾 + !important，覆盖 .field input(14px) / .todo-add input(13.5px)
+   / .my-nm input(15.5px) 等所有旧规则，一次性提到 16px。
+   只作用于 ≤820px 的窄屏；桌面浏览器字号维持原样，排版不受影响。 */
+@media (max-width:820px){
+  /* 排除勾选框 / 单选 / 滑块 —— 它们的尺寸在部分浏览器上跟着 font-size 走，别连带放大 */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,select,[contenteditable="true"],[contenteditable=""]{font-size:16px !important;}
+  input,textarea{max-width:100%;}
+}
+/* 双击缩放兜底：<body> 上的 touch-action 管不到的个别元素单独再压一层 */
+.gate-in,.inputbar input,.field input,.field textarea,.field select,
+.todo-add input,.my-nm input,.nt-check input{
+  touch-action:manipulation;
+}
+</style>
+<style id="userCss"></style>
+</head>
+<body>
+<!-- 分享控制层：线下线提示 / 口令输入 -->
+<div id="gateLayer">
+  <div class="gate-card">
+    <div class="gate-ring" id="gateRing">屿</div>
+    <div class="gate-title" id="gateTitle"></div>
+    <div class="gate-desc" id="gateDesc"></div>
+    <div id="gatePassWrap" style="display:none">
+      <input class="gate-in" id="gateInput" type="password" maxlength="32" placeholder="请输入访问口令" autocomplete="off">
+      <button class="gate-btn" id="gateBtn">进 入</button>
+      <div class="gate-err" id="gateErr"></div>
+    </div>
+    <div id="gateHintWrap" style="display:none">
+      <div class="gate-hint-label">暗 号 线 索</div>
+      <div class="gate-hint" id="gateHint1"></div>
+      <!-- v2.24.15：第二级线索已按用户要求删除（只留第一句） -->
+    </div>
+    <div class="gate-foot">彤 话 屿 · TONG HUA YU</div>
+  </div>
+</div>
+<!-- v2.24.12：须知模板 —— 由 app.js 在启动时搬进 #phone 内部（这样它自动只覆盖手机屏，不盖住桌面外的页面底色），
+     并作为「开屏页之上、口令门之下」的一层。放在 #phone 外面是为了模板本身不参与层叠/布局。 -->
+<template id="noticeTpl">
+  <div id="noticeLayer">
+    <div class="nt-card">
+      <div class="nt-head">
+        <div class="nt-ring">屿</div>
+        <div class="nt-title">彤话屿 · 网站用户须知</div>
+        <div class="nt-sub">TONG HUA YU</div>
+        <div class="nt-author">作者：小红书<b>@彤语_iuo</b></div>
+      </div>
+      <div class="nt-body">
+        <div class="nt-p">欢迎来到彤话屿字卡传讯站点。当你踏入本站，即代表你已阅读并认同以下全部内容。</div>
+        <div class="nt-p"><span class="nt-h">一、站点定位</span>本网站是<b>个人兴趣创作项目</b>，站内字卡仅作<b>情绪陪伴、休闲消遣</b>之用。它并非预言，也不能替代心理咨询、医疗、法律等专业意见。面对学业、情感、健康等人生重要抉择，请立足于现实生活，<b>切勿单凭字卡内容做出重大决定</b>。</div>
+        <div class="nt-p"><span class="nt-h">二、创作相关说明</span>本站全部代码由 <b>AI 生成、迭代修改</b>；我负责<b>测试排查 bug</b>，指定美化方向、交互逻辑与整体风格，引导 AI 持续调整优化。网站部分交互功能参考了网络上已有的网页交互思路，例如<b>小手机、字卡网站</b>等项目；<b>如果有朋友能够明确指出某一项功能的原首创创作者，欢迎告知我，我会立刻补充标注来源，尊重所有原创创作者</b>。<br>所有经整合改写后的文案与视觉素材，保留相应权益。<b>未经创作者书面许可，禁止转载、剪辑、二次改编以及商用牟利</b>；仅允许个人<b>非商用</b>保存。</div>
+        <div class="nt-p"><span class="nt-h">三、使用责任划分</span>你在浏览、抽取字卡的过程中产生的情绪感触、所思所想与后续行动，<b>相关后果全部由使用者本人承担</b>。站点创作者不对你的个人选择与情绪困扰承担责任。</div>
+        <div class="nt-p"><span class="nt-h">四、使用规范</span>请勿借助本站内容<b>引战、造谣或恶意二次创作</b>，也不得利用本站传播低俗、违规信息。</div>
+        <div class="nt-p"><span class="nt-h">五、站点服务说明</span>本站为爱发电，<b>免费搭建，无任何付费项目</b>。网页或许会出现程序 bug、访问不稳等状况，作者保留随时更新、维护，或下线站点内容的权利。</div>
+        <div class="nt-p"><span class="nt-h">六、访问提示</span>建议<b>心智成熟</b>的朋友访问本站。倘若你正深陷持续低落的情绪之中，请优先向身边亲友或专业心理工作者寻求帮助。</div>
+        <div class="nt-hr"></div>
+        <div class="nt-p"><span class="nt-h">七、访问方式</span>本站设有访问口令，需在入场时输入正确口令方可进入。口令线索会在输入页给出，按提示逐步解锁即可。</div>
+        <div class="nt-hr"></div>
+        <div class="nt-p" style="font-size:12px;color:var(--ink-3)">本须知在你首次进入与每次网站更新后展示，需阅读满 30 秒并勾选确认后方可进入。</div>
+      </div>
+      <div class="nt-foot">
+        <label class="nt-check"><input type="checkbox" id="ntAgree"> 我已阅读并知晓全部须知</label>
+        <button class="nt-btn" id="ntEnter" disabled>请先阅读（<span class="nt-remain" id="ntRemain">30</span>s）</button>
+        <div class="nt-author nt-author-foot">作者：小红书<b>@彤语_iuo</b></div>
+      </div>
+    </div>
+  </div>
+</template>
+<div id="phone">
+  <!-- 开屏页 -->
+  <div id="splash">
+    <div class="sp-ring-wrap">
+      <!-- 一座小岛（v2.24.21 重绘：沙洲分两层、棕榈带弧度、小屋加窗、云与浪各三层） -->
+      <svg class="sp-island" viewBox="0 0 150 150" fill="none" aria-label="彤话屿">
+        <g class="isl">
+          <!-- 岛体：水面上的沙洲（外轮廓） -->
+          <path class="ln" d="M29.5 93.6c7-10.6 18.6-15.6 45.5-15.6s38.5 5 45.5 15.6c-4.3 7.4-19.9 10.6-45.5 10.6S33.8 101 29.5 93.6z"/>
+          <!-- 沙洲内侧的第二条线：做出一点厚度 -->
+          <path class="ln-thin" d="M38.5 97.4c5.8 3.2 20.4 4.4 36.5 4.4s30.7-1.2 36.5-4.4"/>
+          <!-- 小丘：两条叠线，一小一大 -->
+          <path class="ln-thin" d="M43.6 90.6c4.8-8.8 10-13.2 15.6-14.4"/>
+          <path class="ln-thin" d="M56.2 77.2c2.6-1.5 5-.5 6.8 1.6 2.1 2.5 3.9 7.6 5 9.6"/>
+          <!-- 棕榈：带弧度的树干 -->
+          <path class="ln-thin" d="M68.4 88.4c.5-8 1.6-16.1 6.1-24.3"/>
+          <!-- 棕榈叶：四片 -->
+          <path class="ln" d="M74.5 64.1c-4.7-4.6-10.5-5.4-15.6-3.4 2.7 5 8.1 7.3 15.6 3.4z"/>
+          <path class="ln" d="M74.5 64.1c4.9-4.2 10.7-4.9 15.7-2.7-2.9 4.8-8.3 6.9-15.7 2.7z"/>
+          <path class="ln-thin" d="M74.5 64.1c-1.2-5.9-4.7-9.9-9.5-11.3.4 5.3 3.3 9.3 9.5 11.3z"/>
+          <path class="ln-thin" d="M74.5 64.1c1.7-5.8 5.3-9.6 10.1-10.8-.8 5.3-4 9.1-10.1 10.8z"/>
+          <!-- 椰果 -->
+          <circle class="ln-fill" cx="71.8" cy="67.9" r="1.5"/>
+          <circle class="ln-fill" cx="77.4" cy="68.3" r="1.5"/>
+          <!-- 小屋：屋顶 + 墙 + 门 + 小窗 -->
+          <path class="ln-thin" d="M88.6 87.8V77.5l7.5-5.4 7.5 5.4v10.3"/>
+          <path class="ln-thin" d="M92.4 79.6h3.3v8.2"/>
+          <path class="ln-thin" d="M98.8 80.4h2.5v2.7h-2.5z"/>
+          <!-- 细沙与石子 -->
+          <circle class="ln-fill" cx="104.8" cy="93.2" r="1.2"/>
+          <circle class="ln-fill" cx="42.4" cy="94.2" r="1.2"/>
+          <circle class="ln-fill" cx="80.6" cy="92" r="0.9"/>
+        </g>
+        <!-- 云（两朵，慢慢横移） -->
+        <g class="cld">
+          <path class="ln-thin" d="M96.5 40.5c0-3.5 2.8-6.3 6.3-6.3 1.4 0 2.7.5 3.7 1.3 1.1-2.5 3.6-4.2 6.5-4.2 3.9 0 7.1 3.1 7.1 7"/>
+        </g>
+        <g class="cld2">
+          <path class="ln-thin" d="M22.5 51c0-2.7 2.2-4.9 4.9-4.9 1.1 0 2.1.4 2.9 1 1.1-2.3 3.5-3.9 6.2-3.9 3.7 0 6.8 2.4 6.8 5.4"/>
+        </g>
+        <!-- 水波（三层，长短错开） -->
+        <g class="wv">
+          <path class="ln-thin" d="M24 110.5c6.4-4.8 12.1-4.8 18.5 0s12.1 4.8 18.5 0 12.1-4.8 18.5 0 12.1 4.8 18.5 0 12.1-4.8 18.5 0"/>
+        </g>
+        <g class="wv2">
+          <path class="ln-thin" d="M13 121c6.4-4.8 12.1-4.8 18.5 0s12.1 4.8 18.5 0 12.1-4.8 18.5 0 12.1 4.8 18.5 0 12.1-4.8 18.5 0 12.1 4.8 18.5 0"/>
+        </g>
+        <g class="wv3">
+          <path class="ln-thin" d="M34 131.5c6-4.5 11.4-4.5 17.4 0s11.4 4.5 17.4 0 11.4-4.5 17.4 0 11.4 4.5 17.4 0"/>
+        </g>
+        <!-- 海鸟 -->
+        <path class="ln-thin brd" d="M38 36c3-3.4 6-3.4 9 0 3-3.4 6-3.4 9 0"/>
+        <path class="ln-thin brd2" d="M101 26c2.4-2.7 4.8-2.7 7.2 0 2.4-2.7 4.8-2.7 7.2 0"/>
+      </svg>
+      <!-- v2.24.21：绕岛航行的小帆船（取代原来那颗转圈的墨点） -->
+      <div class="sp-orbit">
+        <span class="sp-boat-bob">
+          <span class="sp-boat">
+            <svg viewBox="0 0 26 26" aria-hidden="true">
+              <path d="M13 3.4v13.4"/>
+              <path d="M13 4.6 20.3 15.2H13z"/>
+              <path d="M13 7.4 6.3 15.2H13z"/>
+              <path d="M3.4 17.6h19.2l-2.5 4.1a2.4 2.4 0 0 1-2.1 1.3H8a2.4 2.4 0 0 1-2.1-1.3z"/>
+            </svg>
+          </span>
+        </span>
+      </div>
+    </div>
+    <div class="sp-title-wrap">
+      <div class="sp-title">彤话屿</div>
+      <div class="sp-sub">TONG HUA YU</div>
+    </div>
+    <div class="sp-line-bar"><div class="sp-line-in"></div></div>
+    <div class="sp-touch">轻 触 屏 幕 进 入</div>
+    <label class="sp-remember"><input type="checkbox" id="spRemember"> 下次自动进入</label>
+    <svg class="sp-tide" viewBox="0 0 340 40" preserveAspectRatio="none">
+      <path class="l1" d="M-20 20 Q20 11 60 20 T140 20 T220 20 T300 20 T380 20" fill="none" stroke-width="1.2"/>
+      <path class="t2 l2" d="M-20 29 Q20 21 60 29 T140 29 T220 29 T300 29 T380 29" fill="none" stroke-width="1"/>
+    </svg>
+  </div>
+
+  <div id="statusBar">
+    <span id="sbTime">--:--</span>
+    <span class="right"><span id="sbCarrier" style="font-weight:800">彤话屿</span>
+      <svg width="17" height="11" viewBox="0 0 18 12" style="display:block">
+        <rect x="0" y="7.5" width="3" height="4.5" rx="1" fill="currentColor"/>
+        <rect x="5" y="5" width="3" height="7" rx="1" fill="currentColor"/>
+        <rect x="10" y="2.5" width="3" height="9.5" rx="1" fill="currentColor"/>
+        <rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor" opacity=".28"/>
+      </svg>
+      <span class="batt"><span class="box"></span>100</span></span>
+  </div>
+
+  <!-- 桌面：真实手机桌面 —— 小组件与应用混排两页，长按可拖拽换位（v2.24.0） -->
+  <div id="desktop" class="wp-dots">
+    <div class="wall-tint" id="wallTint"></div>
+    <div id="homePages">
+      <div class="hp-page">
+        <div class="hp-pad" style="flex:none">
+          <div id="timeWidget">
+            <div>
+              <div class="clock" id="deskClock">--:--</div>
+              <div class="date" id="deskDate"></div>
+              <div style="margin-top:8px"><span id="coinMini"><b id="coinMiniIco"></b> <b id="coinMiniVal">0</b> 潮汐石</span></div>
+            </div>
+            <div class="quote" id="deskQuote"></div>
+          </div>
+        </div>
+        <div class="desk-grid hp-pad" id="deskP1" style="padding-top:0"></div>
+      </div>
+      <!-- v2.24.7：用户确认 322 布局合适 → 页2 不再加额外顶部留白（原本的 30px 整体下移已撤回） -->
+      <div class="hp-page">
+        <div class="desk-grid hp-pad" id="deskP2"></div>
+        <div class="section-label" style="padding:16px 20px 0;color:var(--ink-3);font-weight:500;line-height:1.8">
+          长按应用或小组件可以拖动换位置 · 轻点小组件改内容（备忘录记待办 · 照片换图配字 · 音乐可切歌播放）
+        </div>
+      </div>
+    </div>
+    <div id="pageDots"><i class="on"></i><i></i></div>  </div>
+  <div id="dock"></div>
+
+  <!-- 应用窗口 -->
+  <div id="appWindow" class="hide">
+    <div id="appHead">
+      <button class="iconbtn" id="appBack">‹</button>
+      <div class="title"><span id="appTitle"></span><span class="sub" id="appSub"></span></div>
+      <button class="iconbtn hide" id="appBell" title="互动通知" style="position:relative"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4a5.6 5.6 0 0 1 5.6 5.6c0 3.2.7 5 1.6 6.1H4.8c.9-1.1 1.6-2.9 1.6-6.1A5.6 5.6 0 0 1 12 4z"/><path d="M10.2 19.4a1.9 1.9 0 0 0 3.6 0"/></svg></button>
+      <button class="iconbtn hide" id="appExtra">＋</button>
+    </div>
+    <div id="appBody"></div>
+  </div>
+
+  <!-- 通话浮层 -->
+  <div id="callOverlay" class="hide"></div>
+  <div class="toast" id="toast"></div>
+  <!-- 设置页保存条：有未保存改动时从底部升起 -->
+  <div id="saveBar">
+    <div class="sb-txt">
+      <div class="sb-t1" id="sbTitle">有改动尚未保存</div>
+      <div class="sb-t2" id="sbDesc">点「保存」后才会生效</div>
+    </div>
+    <button class="sb-undo" id="sbUndo">撤销</button>
+    <button class="sb-save" id="sbSave">保存</button>
+  </div>
+</div>
+
+<!-- 构建号：每次发布改动这一处即可让手机端缓存全部失效 -->
+<script>window.__BUILD__='344';</script>
+<script>
+(function(){
+  var B = window.__BUILD__ || '0';
+  /* 已下线则不加载主脚本 */
+  if(window.__OFFLINE__ === true || String(window.__OFFLINE__) === 'true') return;
+  /* 资源带版本号加载：版本变了 URL 就变，缓存必然失效 */
+  ['data.js','games.js','app.js'].forEach(function(f){
+    document.write('<script src="' + f + '?v=' + B + '"><\/script>');
+  });
+})();
+</script>
+<script>
+/* ============ 分享控制：下线开关（v2.24.12 精简版） ============
+   · window.__OFFLINE__ = true  → 整站下线，访问者只会看到「已下线」提示
+   · window.__PASS__ = '口令'   → 口令门（★ v2.24.12 起口令门改由 app.js 的进站流程接管 ★）
+   进站顺序 v2.24.12：开屏图标 → 网站须知 → 输入口令 → 开场动画 → 进入网站
+   这么排的原因是：口令门要排在「网站须知」之后，而须知只有在主脚本起来后才谈得上「阅读满 30 秒」，
+   所以口令门不能再抢在主脚本前面自己弹；主脚本会按 flow 在正确的时机打开它。
+   这里只保留「整站下线」的兜底提示（它在任何情况下都必须最先亮出来）。 */
+(function(){
+  var OFFLINE = (window.__OFFLINE__ === true || String(window.__OFFLINE__) === 'true');
+  if(!OFFLINE) return;                             /* 没下线 → 交给主脚本的进站流程 */
+  if(window.__SINGLE__) OFFLINE = false;           /* 单文件版不启用下线开关 */
+  if(!OFFLINE) return;
+
+  function boot(){
+    var lay = document.getElementById('gateLayer');
+    if(!lay){ document.addEventListener('DOMContentLoaded', boot); return; }
+    document.getElementById('gateTitle').textContent = '已 暂 停 分 享';
+    document.getElementById('gateDesc').innerHTML = '这个页面的分享已关闭。<br>如需重新开放，请告诉创建者。';
+    lay.classList.add('on');
+    var app = document.getElementById('phone');
+    if(app) app.style.visibility = 'hidden';
+    /* 彻底锁死：屏蔽主脚本的执行入口 */
+    window.__BLOCKED__ = true;
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
+<script>
+/* 版本自检：页面若被旧缓存命中，提示一键刷新到最新 */
+(function(){
+  if(window.__OFFLINE__ === true || String(window.__OFFLINE__) === 'true') return;
+  setTimeout(function(){
+    try{
+      fetch('version.json?t=' + Date.now(), {cache:'no-store'})
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){
+          if(!j || !j.build) return;
+          if(String(j.build) === String(window.__BUILD__)) return;
+          if(sessionStorage.getItem('th_ver_skip') === String(j.build)) return;
+          var d = document.createElement('div');
+          d.id = 'verBar';
+          d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:99999;' +
+            'background:#1c1c1e;color:#fff;padding:12px 20px;border-radius:24px;font-size:13px;' +
+            'box-shadow:0 10px 28px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap;';
+          d.innerHTML = '⬆ 有新版本 v' + j.build + '，点此刷新';
+          d.onclick = function(){
+            sessionStorage.setItem('th_ver_skip', String(j.build));
+            location.replace(location.pathname + '?v=' + j.build + '&t=' + Date.now());
+          };
+          document.body.appendChild(d);
+          setTimeout(function(){ if(d.parentNode) d.parentNode.removeChild(d); }, 20000);
+        })
+        .catch(function(){});
+    }catch(e){}
+  }, 1200);
+})();
+</script>
+</body>
+</html>
