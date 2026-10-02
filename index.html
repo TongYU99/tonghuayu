@@ -1725,8 +1725,13 @@ html[data-theme="dark"] #phone .nt-card{background:rgba(24,24,28,.82);}
   </div>
 </div>
 
+<!-- v2.24.23 云服务 SDK（服务端口令门用它）。这里自托管而不是引 CDN：国内访问 jsdelivr 时好时坏，
+     而这一条直接决定口令门能不能生效。defer 加载不挡首屏；加载失败会自动退回本地口令，不影响离线使用。
+     若要更新：从 https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js 取新包覆盖 sdk/workbuddy-cloud.js -->
+<script defer src="sdk/workbuddy-cloud.js" data-cloud-sdk></script>
+
 <!-- 构建号：每次发布改动这一处即可让手机端缓存全部失效 -->
-<script>window.__BUILD__='344';</script>
+<script>window.__BUILD__='345';</script>
 <script>
 (function(){
   var B = window.__BUILD__ || '0';

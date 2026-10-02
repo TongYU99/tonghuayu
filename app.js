@@ -8618,17 +8618,208 @@ function initNotice(){
    · 口令已在 sessionStorage / localStorage 里通过过的老用户：轻触开屏后直接进站（不再卡口令）；
    · 须知每次更新（build 变化）都要重看，所以它排在口令之前 —— 未看须知不被告知要输口令也很自然，
      因为口令提示就写在须知第七条里。 */
+/* ================= v2.24.23 服务端口令门（云服务） =================
+   为什么要有它：原来口令是明文写在 index.html 里的（window.__PASS__），拿到链接的人看一眼源码
+   就拿到了口令；更麻烦的是改了口令也没法让已经进来的老设备失效，而且「有多少人来过」根本无从查起。
+   现在把口令判定挪到服务端（PostgreSQL 函数 gate_check，bcrypt 校验）：
+     · 源码里不再需要口令          → 看源码拿不到
+     · 换口令 = 改一行数据库记录   → 所有旧设备立刻失效（令牌由口令哈希派生）
+     · 每次进站尝试都落一行日志    → 这才第一次有了「多少人、几个设备、什么时候来」
+   覆盖范围（实测）：云服务按精确 Origin 匹配，只有主链能直连；单文件版与 GitHub 版被 403 挡掉，
+   所以它们走 gate-bridge.html 桥接 —— 那是主链上的一页，用隐藏 iframe + postMessage 代为通话。
+   云端不可达时（离线、桥接超时、文件被另存到本机）退回本地口令，保证离线仍能用。 */
+const CLOUD_CFG = {
+  /* 四项均取自云服务 publicConfig（workbuddy_cloud_service action=activate 的返回）。
+     endpoint 必须与发布域名一字不差，否则精确 Origin 匹配会拒掉整条通道。 */
+  endpoint: 'https://tonghua-island.app.workbuddy.host',
+  oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
+  publishableKey: 'wbpk_LH8sgrzkWc4ZO24DLCSejY_gAwzDTrHkUv2OORSdmqWQDK8dB305PEp'
+};
+const GATE_BRIDGE_URL = CLOUD_CFG.endpoint + '/gate-bridge.html';
+const GATE_TOKEN_KEY = 'th_gate_token';
+const GATE_TIMEOUT_MS = 6000;
+let _cloudClient = null;
+/* kind: unknown（还没问过）| checking（正在静默验令牌）| ok | bad | offline（创建者已停站）
+        | locked（试错太频繁，临时锁）| unavailable（云端到不了 → 走本地兜底） */
+let gateState = { kind: 'unknown' };
+
+function gateCloudReady(){
+  try{ return typeof WorkBuddyCloud !== 'undefined' && WorkBuddyCloud && typeof WorkBuddyCloud.createWorkBuddyCloud === 'function'; }
+  catch(e){ return false; }
+}
+function cloudClient(){
+  if(_cloudClient) return _cloudClient;
+  if(!gateCloudReady()) return null;
+  try{
+    _cloudClient = WorkBuddyCloud.createWorkBuddyCloud({
+      endpoint: CLOUD_CFG.endpoint,
+      oauthRelayBaseUrl: CLOUD_CFG.oauthRelayBaseUrl,
+      publishableKey: CLOUD_CFG.publishableKey
+    });
+  }catch(e){ _cloudClient = null; }
+  return _cloudClient;
+}
+/* 设备标识：随机串，只用来给「独立访客」去重，不含任何身份信息 */
+function gateDeviceId(){
+  try{
+    let d = localStorage.getItem('th_dev');
+    if(!d){ d = 'd' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); localStorage.setItem('th_dev', d); }
+    return d;
+  }catch(e){ return ''; }
+}
+function gateChannel(){
+  try{
+    const h = location.hostname || '';
+    if(h.indexOf('htmlcode.fun') >= 0) return 'single';
+    if(h.indexOf('github.io') >= 0) return 'gh';
+    if(h.indexOf('app.workbuddy.host') >= 0) return 'main';
+    return h ? 'other' : 'local';
+  }catch(e){ return 'unknown'; }
+}
+function gateHasToken(){
+  try{ return !!localStorage.getItem(GATE_TOKEN_KEY); }catch(e){ return false; }
+}
+/* 直连：只有主链（与 endpoint 同源）能用 */
+function gateDirect(value){
+  return new Promise(function(resolve){
+    const c = cloudClient();
+    if(!c || !c.database){ resolve({ status: 'unavailable' }); return; }
+    let done = false;
+    const timer = setTimeout(function(){ if(!done){ done = true; resolve({ status: 'unavailable' }); } }, GATE_TIMEOUT_MS);
+    const settle = function(v){ if(done) return; done = true; clearTimeout(timer); resolve(v); };
+    try{
+      c.database.rpc('gate_check', { p_pass: value, p_device: gateDeviceId(), p_channel: gateChannel() })
+        .then(function(r){
+          if(r && r.error){ settle({ status: 'unavailable' }); return; }
+          const d = r && r.data;
+          if(d && typeof d === 'object' && d.status) settle({ status: d.status, token: d.token || '' });
+          else settle({ status: 'unavailable' });
+        }, function(){ settle({ status: 'unavailable' }); });
+    }catch(e){ settle({ status: 'unavailable' }); }
+  });
+}
+/* 桥接：单文件版 / GitHub 版与云服务不同源，直连必被 403。改为在主链上开一个隐藏 iframe，
+   由它（同源）去调云服务，再把 ok/bad 用 postMessage 回传。 */
+function gateViaBridge(value){
+  return new Promise(function(resolve){
+    const ORIGIN = CLOUD_CFG.endpoint;
+    const nonce = 'n' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;border:0;';
+    frame.src = GATE_BRIDGE_URL + '?nonce=' + encodeURIComponent(nonce);
+    let settled = false;
+    const finish = function(v){
+      if(settled) return; settled = true;
+      try{ window.removeEventListener('message', onMsg); }catch(e){}
+      try{ if(frame.parentNode) frame.parentNode.removeChild(frame); }catch(e){}
+      resolve(v);
+    };
+    function onMsg(e){
+      if(e.origin !== ORIGIN) return;
+      const d = e.data;
+      if(!d || d.nonce !== nonce) return;
+      if(d.type === 'th-gate-ready'){
+        try{
+          frame.contentWindow.postMessage({
+            type: 'th-gate-ask', nonce: nonce, pass: value,
+            device: gateDeviceId(), channel: gateChannel()
+          }, ORIGIN);
+        }catch(err){}
+        return;
+      }
+      if(d.type === 'th-gate-result') finish({ status: d.status || 'unavailable', token: d.token || '' });
+    }
+    window.addEventListener('message', onMsg);
+    try{ document.body.appendChild(frame); }catch(e){ finish({ status: 'unavailable' }); return; }
+    setTimeout(function(){ finish({ status: 'unavailable' }); }, GATE_TIMEOUT_MS);
+  });
+}
+function gateRemote(value){
+  let sameOrigin = false;
+  try{ sameOrigin = (location.origin === CLOUD_CFG.endpoint); }catch(e){}
+  if(sameOrigin){
+    /* 主链：与云服务同源，直接问 */
+    if(!gateCloudReady()) return Promise.resolve({ status: 'unavailable' });
+    return gateDirect(value);
+  }
+  /* 非主链：本页压根碰不到云服务（精确 Origin 会 403），交给主链上的桥接页代问。
+     这条路径不需要本页加载 SDK —— 只有单文件版与 GitHub 版走它；其余情形
+     （手机里另存的文件、未知域名、测试环境）一律判为够不着，直接退回本地口令。 */
+  const ch = gateChannel();
+  if(ch === 'single' || ch === 'gh') return gateViaBridge(value);
+  return Promise.resolve({ status: 'unavailable' });
+}
+/* 进站用：先问服务端；服务端够不着才退回本地口令 */
+function gateSubmit(value){
+  if(!value) return Promise.resolve({ status: 'bad' });
+  return gateRemote(value).then(function(res){
+    if(res && res.status && res.status !== 'unavailable') return res;
+    let lp = '';
+    try{ lp = String(window.__PASS__ || ''); }catch(e){}
+    if(!lp) return { status: 'ok', local: true };
+    return { status: value === lp ? 'ok' : 'bad', local: true };
+  }, function(){ return { status: 'unavailable' }; });
+}
+/* 静默探测：p_pass 传 null，服务端只回报状态、不写日志。
+   这样「停站」能立刻对所有人生效，也不会污染进站统计。 */
+function gateProbe(){
+  return gateRemote(null).then(function(res){ return (res && res.status) || 'unavailable'; },
+                              function(){ return 'unavailable'; });
+}
+/* 静默验令牌：老设备进站时先拿本机存的令牌问一次服务端。
+   令牌 = sha256(口令哈希)，所以换口令后它会自动对不上 → 老设备被重新拦回口令门。 */
+function gateVerifyToken(){
+  let tok = '';
+  try{ tok = String(localStorage.getItem(GATE_TOKEN_KEY) || ''); }catch(e){}
+  if(!tok) return Promise.resolve(false);
+  return gateRemote('tok:' + tok).then(function(res){
+    const st = (res && res.status) || 'unavailable';
+    if(st === 'offline'){ gateState = { kind: 'offline' }; gateShowPaused(); return false; }
+    if(st === 'ok'){ gateState = { kind: 'ok' }; return true; }
+    if(st === 'unavailable'){ gateState = { kind: 'unavailable' }; return false; }
+    /* bad / locked → 令牌已失效（多半是创建者换过口令）→ 清掉它，重新走口令门 */
+    try{ localStorage.removeItem(GATE_TOKEN_KEY); }catch(e){}
+    gateState = { kind: 'bad' };
+    return false;
+  }, function(){ gateState = { kind: 'unavailable' }; return false; });
+}
+/* 创建者在后台按下「停站」 → 立刻拦下所有通道 */
+function gateShowPaused(){
+  window.__BLOCKED__ = true;
+  const lay = $('gateLayer'), app = $('phone');
+  const t = $('gateTitle'), d = $('gateDesc'), rec = $('gatePassWrap'), hw = $('gateHintWrap');
+  if(t) t.textContent = '已 暂 停 分 享';
+  if(d) d.innerHTML = '这个页面的分享已关闭。<br>如需重新开放，请告诉创建者。';
+  if(rec) rec.style.display = 'none';
+  if(hw) hw.style.display = 'none';
+  if(app) app.style.visibility = 'hidden';
+  if(lay) lay.classList.add('on');
+}
 function gateLayerOn(){
   const g = $('gateLayer');
   return !!(g && g.classList.contains('on'));
 }
+/* v2.24.23：这个通道够不够得着云服务？主链直连；单文件版与 GitHub 版走主链上的桥接。
+   都不行（手机里另存的文件、未知域名、离线）才允许退回本地口令。 */
+function gateCloudCapable(){
+  const ch = gateChannel();
+  return ch === 'main' || ch === 'single' || ch === 'gh';
+}
 function passAlreadyOk(){
   let pass = '';
   try{ pass = String(window.__PASS__ || ''); }catch(e){}
-  if(!pass) return true;                       /* 没设口令 → 视为已通过 */
-  try{
-    return sessionStorage.getItem('th_pass_ok') === '1' || localStorage.getItem('th_pass_ok_v') === pass;
-  }catch(e){ return true; }
+  try{ if(sessionStorage.getItem('th_pass_ok') === '1') return true; }catch(e){}
+  /* 服务端本次进站已确认过（静默验令牌通过） */
+  if(gateState.kind === 'ok') return true;
+  /* 云端到不了 / 没配云服务 → 完全沿用旧逻辑，保证离线与本地文件可用。
+     ⚠️ v2.24.23：能连上云服务时必须先问服务端 —— 否则一台来过一次的老设备会凭本机
+     这张「旧口令通行证」永远绕开服务端：既不落日志（统计失真），也躲过换口令与停站。 */
+  if(gateState.kind === 'unavailable' || (gateState.kind === 'unknown' && !gateCloudCapable())){
+    if(!pass) return true;                       /* 没设口令 → 视为已通过 */
+    try{ return localStorage.getItem('th_pass_ok_v') === pass; }catch(e){ return true; }
+  }
+  return false;
 }
 /* 把当前该显示的那一层摆好 */
 function applyEntryStage(){
@@ -8645,6 +8836,14 @@ function applyEntryStage(){
 
   /* 须知已确认 → 该看口令了 */
   if(gateLayerOn()) return;
+  if(gateState.kind === 'checking') return;         /* 正在静默验令牌 → 先别弹门，等结果 */
+  /* v2.24.23：本机存过服务端令牌 → 先静默验一次；通过就直接进站，不必再输口令 */
+  if(gateState.kind === 'unknown' && gateHasToken()){
+    gateState = { kind: 'checking' };
+    gateVerifyToken().then(function(){ applyEntryStage(); },
+                           function(){ gateState = { kind: 'unavailable' }; applyEntryStage(); });
+    return;
+  }
   if(!passAlreadyOk()){ openGateFromFlow(); return; }
   /* 全部过关 → 起开场动画 */
   startSplashIntro();
@@ -8682,24 +8881,36 @@ function openGateFromFlow(){
   if(!gateSubmitWired){
     gateSubmitWired = true;
     const submit = ()=>{
-      let pass = ''; try{ pass = String(window.__PASS__ || ''); }catch(e){}
-      const inp = $('gateInput'), err = $('gateErr');
+      const inp = $('gateInput'), err = $('gateErr'), btn = $('gateBtn');
       const v = ((inp && inp.value) || '').trim();
-      if(v && v === pass){
-        gateFailCount = 0;
-        try{ localStorage.setItem('th_pass_ok_v', pass); }catch(e){}
-        try{ sessionStorage.setItem('th_pass_ok','1'); }catch(e){}
-        lay.classList.remove('on');
-        if(inp) inp.value = '';
-        if(err) err.textContent = '';
-        applyEntryStage();               /* 过关 → 往下推进（起开场动画） */
-      }else{
+      if(err) err.textContent = '';
+      if(btn){ btn.disabled = true; btn.textContent = '验 证 中'; }
+      const finish = (res)=>{
+        if(btn){ btn.disabled = false; btn.textContent = '进 入'; }
+        const st = (res && res.status) || 'unavailable';
+        if(st === 'ok'){
+          gateFailCount = 0;
+          let pass = ''; try{ pass = String(window.__PASS__ || ''); }catch(e){}
+          /* 服务端发令牌 → 记令牌（换口令即失效）；本地兜底路径 → 沿用旧键，离线也免输 */
+          if(res && res.token){ try{ localStorage.setItem(GATE_TOKEN_KEY, res.token); }catch(e){} }
+          else if(pass){ try{ localStorage.setItem('th_pass_ok_v', pass); }catch(e){} }
+          try{ sessionStorage.setItem('th_pass_ok','1'); }catch(e){}
+          gateState = { kind: 'ok' };
+          lay.classList.remove('on');
+          if(inp) inp.value = '';
+          if(err) err.textContent = '';
+          applyEntryStage();               /* 过关 → 往下推进（起开场动画） */
+          return;
+        }
+        if(st === 'offline'){ gateShowPaused(); return; }
+        if(st === 'locked'){ if(err) err.textContent = '尝试次数过多，请过几分钟再来'; return; }
         gateFailCount++;
         if(inp) inp.value = '';
         /* v2.24.15：二级线索已删除 —— 输错只说一句「口令不对」，不再提示"还能试几次"
            （那个计数是为二级线索服务的，线索没了就没有意义） */
         if(err) err.textContent = '口令不对，请对照上面的线索再试一次';
-      }
+      };
+      gateSubmit(v).then(finish, function(){ finish({ status: 'unavailable' }); });
     };
     const b = $('gateBtn'), i = $('gateInput');
     if(b) b.addEventListener('click', submit);
@@ -8727,6 +8938,12 @@ scheduleProactiveMsg();
 dailyRollover();
 scanPendingReplies();
 scanPendingMomReactions();       /* v2.24.21：补上离站期间到点的朋友圈点赞 / 评论 */
+/* v2.24.23：远程停站开关 —— 创建者在后台把 offline 置真，这里立刻就能拦下所有人，
+   不必等重新发布。p_pass 传 null：服务端只回报状态、不写访问日志，所以探测不污染统计。 */
+try{
+  gateProbe().then(function(st){ if(st === 'offline'){ try{ gateShowPaused(); }catch(e){} } },
+                   function(){});
+}catch(e){}
 dailyTimer=setInterval(dailyRollover,10*60e3);
 
 /* v2.24.12 进站流程：开屏（图标）→ 须知 → 口令 → 开场动画 → 进站。

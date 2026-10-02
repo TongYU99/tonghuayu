@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>彤话屿 · 通行核验</title>
+<style>html,body{margin:0;height:100%;background:transparent;}</style>
+</head>
+<body>
+<!-- ===========================================================================
+     彤话屿 · 口令核验桥接页（v2.24.23）
+     为什么需要它：云服务按「精确 Origin」放行，只有本域名（主链）能直连。
+     单文件版在 htmlcode.fun、GitHub 版在 github.io，直连一律 403。
+     于是这两条通道把这一页嵌进隐藏 iframe，由它（同源）代为询问云服务，
+     再用 postMessage 把 ok / bad 回传 —— 这样它们的口令判定同样由服务端说了算，
+     可以统计、可以吊销，而不是各自揣一份写死在源码里的口令。
+     协议：父页 → 本页 {type:'th-gate-ask', nonce, pass, device, channel}
+           本页 → 父页 {type:'th-gate-ready'|'th-gate-result', nonce, status, token}
+     =========================================================================== -->
+<script defer src="sdk/workbuddy-cloud.js" data-cloud-sdk></script>
+<script>
+(function(){
+  var CLOUD_CFG = {
+    endpoint: 'https://tonghua-island.app.workbuddy.host',
+    oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
+    publishableKey: 'wbpk_LH8sgrzkWc4ZO24DLCSejY_gAwzDTrHkUv2OORSdmqWQDK8dB305PEp'
+  };
+  /* 只服务已知的两条外部通道，避免这一页变成任何人都能用的口令试错接口 */
+  var ALLOWED = ['https://www.htmlcode.fun', 'https://tongyu99.github.io'];
+
+  var nonce = '';
+  try{ nonce = new URLSearchParams(location.search).get('nonce') || ''; }catch(e){}
+  if(!nonce) return;
+
+  var client = null;
+  function getClient(){
+    if(client) return client;
+    try{
+      if(typeof WorkBuddyCloud === 'undefined' || !WorkBuddyCloud.createWorkBuddyCloud) return null;
+      client = WorkBuddyCloud.createWorkBuddyCloud({
+        endpoint: CLOUD_CFG.endpoint,
+        oauthRelayBaseUrl: CLOUD_CFG.oauthRelayBaseUrl,
+        publishableKey: CLOUD_CFG.publishableKey
+      });
+    }catch(e){ client = null; }
+    return client;
+  }
+  function reply(obj, origin){
+    try{ parent.postMessage(obj, origin || '*'); }catch(e){}
+  }
+
+  window.addEventListener('message', function(e){
+    var d = e.data;
+    if(!d || typeof d !== 'object') return;
+    if(d.nonce !== nonce) return;
+    if(d.type !== 'th-gate-ask') return;
+    if(ALLOWED.indexOf(e.origin) < 0) return;
+
+    var c = getClient();
+    if(!c){ reply({ type:'th-gate-result', nonce:nonce, status:'unavailable' }, e.origin); return; }
+    try{
+      c.database.rpc('gate_check', {
+        p_pass: (d.pass == null ? null : String(d.pass)),
+        p_device: (d.device ? String(d.device) : null),
+        p_channel: (d.channel ? String(d.channel) : 'bridge')
+      }).then(function(r){
+        if(r && r.error){ reply({ type:'th-gate-result', nonce:nonce, status:'unavailable' }, e.origin); return; }
+        var v = r && r.data;
+        reply({
+          type:'th-gate-result', nonce:nonce,
+          status: (v && v.status) ? String(v.status) : 'unavailable',
+          token: (v && v.token) ? String(v.token) : ''
+        }, e.origin);
+      }, function(){
+        reply({ type:'th-gate-result', nonce:nonce, status:'unavailable' }, e.origin);
+      });
+    }catch(err){
+      reply({ type:'th-gate-result', nonce:nonce, status:'unavailable' }, e.origin);
+    }
+  });
+
+  /* 通知父页：桥已就位，可以把口令递过来 */
+  reply({ type:'th-gate-ready', nonce:nonce }, '*');
+})();
+</script>
+</body>
+</html>
