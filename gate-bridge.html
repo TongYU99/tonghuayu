@@ -18,6 +18,13 @@
      可以统计、可以吊销，而不是各自揣一份写死在源码里的口令。
      协议：父页 → 本页 {type:'th-gate-ask', nonce, pass, device, channel}
            本页 → 父页 {type:'th-gate-ready'|'th-gate-result', nonce, status, token}
+     v2.24.24 增补：本页顺带充当「版本问询窗」——
+           父页 → 本页 {type:'th-ver-ask', nonce}
+           本页 → 父页 {type:'th-ver-ready'|'th-ver-result', nonce, build, version}
+     起因：单文件版是 htmlcode.fun 上的一个孤页，同源没有 version.json，
+     自己 fetch 主链的 version.json 又会被 CORS 挡掉，于是旧版只能回一句
+     「以发布页为准」——iOS 把页面加到桌面的人根本不知道该做什么，看起来就是更新不了。
+     本页与 version.json 同源，读得到，所以由本页代读一个构建号回去。
      =========================================================================== -->
 <script defer src="sdk/workbuddy-cloud.js" data-cloud-sdk></script>
 <script>
@@ -58,6 +65,28 @@
     var d = e.data;
     if(!d || typeof d !== 'object') return;
     if(d.nonce !== nonce) return;
+
+    /* v2.24.24：版本问询。故意放在白名单检查之前 —— 它吐出去的只是一个构建号
+       （页脚就印着），没有可被滥用的东西；而卡白名单会让「另存到本机」「换了域名」
+       这类正当场景问不到版本。核验口令那条仍然严格按白名单放行。 */
+    if(d.type === 'th-ver-ask'){
+      try{
+        fetch('version.json?t=' + Date.now(), {cache:'no-store'})
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(j){
+            reply({ type:'th-ver-result', nonce:nonce,
+                    build: (j && j.build) ? String(j.build) : '',
+                    version: (j && j.version) ? String(j.version) : '' }, e.origin);
+          })
+          .catch(function(){
+            reply({ type:'th-ver-result', nonce:nonce, build:'', version:'' }, e.origin);
+          });
+      }catch(err){
+        reply({ type:'th-ver-result', nonce:nonce, build:'', version:'' }, e.origin);
+      }
+      return;
+    }
+
     if(d.type !== 'th-gate-ask') return;
     if(ALLOWED.indexOf(e.origin) < 0) return;
 
@@ -98,6 +127,10 @@
     setTimeout(announce, 100);
   }
   announce();
+
+  /* v2.24.24：顺手先报一声「版本问询可用」。它不需要 SDK，所以不必陪着 announce()
+     一起等那 2.5 秒 —— 父页收到这一声才知道可以递 th-ver-ask 进来。 */
+  reply({ type:'th-ver-ready', nonce:nonce }, '*');
 })();
 </script>
 </body>

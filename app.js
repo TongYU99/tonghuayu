@@ -305,7 +305,7 @@ function defaultState(){
       callHangProb:20,      /* 通话中联系人在线挂断的概率（v2.22.0，默认 20%） */
       privWeight:1,         /* 专用字卡加权倍率：每张专用卡按 N 张公用卡参与抽取（1=按张数比例，v2.22.0） */
       momentProb:40,        /* 联系人每日发朋友圈概率（命中后发 1~2 条） */
-      letterProb:50,        /* 联系人每日写信概率（v2.24.15 由 12% 上调；连续 2 天没写自动抬到 80%） */
+      letterProb:50,        /* 联系人每日写信概率（v2.24.15 由 12% 上调；v2.24.24 起连续 2 天没写自动抬到 90%） */
       surveyAskProb:37,     /* 联系人每日主动向我提问的概率（v2.23.0，默认 37%） */
       listenAcceptProb:85,  /* 邀请一起听时 ta 应邀的概率（v2.23.0） */
       momentLikeProb:70,    /* 联系人给我朋友圈点赞的概率 */
@@ -1452,7 +1452,9 @@ const I=(k,s)=>{ const inner=(ICONS[k]||'').replace(/^<svg[^>]*>/,'').replace(/<
   return `<svg viewBox="0 0 24 24" width="${z}" height="${z}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;flex:none">${inner}</svg>`; };
 const APPS=[
   { id:'chat',    icon:'chat',    label:'聊天',    dock:true, badge:()=>totalUnread() },
-  { id:'moments', icon:'moments', label:'邻屿圈' },
+  /* v2.24.24：邻屿圈也挂未读红点。原来联系人的点赞 / 评论只在「走进邻屿圈」时才更新
+     右上角铃铛，人在桌面时毫无提示 —— 于是「发了动态却像没人理」有一半是没看见。 */
+  { id:'moments', icon:'moments', label:'邻屿圈',  badge:()=>state.momUnread||0 },
   { id:'mail',    icon:'mail',    label:'信箱' },
   { id:'music',   icon:'music',   label:'音乐' },   /* v2.24.0：移出 dock，上桌面网格（dock 只留 4 个不挤） */
   { id:'diary',   icon:'diary',   label:'心情手札' },
@@ -3837,6 +3839,8 @@ function pushMomNotice(by,type){
   state.momNotices.push({t:Date.now(),by,type});
   if(state.momNotices.length>60)state.momNotices=state.momNotices.slice(-60);
   state.momUnread=(state.momUnread||0)+1;
+  /* v2.24.24：把红点刷到桌面图标上 —— 人在桌面时也能看见「有人赞了你」 */
+  try{ renderDesktop(); }catch(e){}
   save();
   if(currentApp==='moments')updateMomBell();
 }
@@ -3897,20 +3901,29 @@ function scheduleMomCommentBack(post,byName){
   queueMomReaction(post.id,c.id,'back',Date.now()+momReactDelay());
 }
 
-/* ---------- 朋友圈互动的延迟调度（v2.24.15 引入 · v2.24.21 补持久化） ----------
+/* ---------- 朋友圈互动的延迟调度（v2.24.15 引入 · v2.24.21 补持久化 · v2.24.24 改两段式） ----------
    用户反馈「我刚发，联系人立刻就回了」太假。真实的朋友圈是「各忙各的，想起来才刷到」，
-   所以评论 / 点赞 / 楼中楼回覆统一推迟到 5 分钟~10 小时之间的随机时间
-   （下限 5 分钟避免刚放下手机就响，上限 10 小时保证「发出去当天总能等到回应」）。
+   所以评论 / 点赞 / 楼中楼回覆统一推迟（下限 5 分钟，避免刚放下手机就响）。
+
+   v2.24.24 改两段式的原因：原来是一整段 5 分钟~10 小时均匀随机，均值 5 小时 ——
+   作者 16:00 发的动态到 20:36 一条回应都没有，以为功能坏了（实际是排队中）。
+   现在七成落在 2 小时内（「有人马上看到了」的即时感），三成拖到 2~10 小时
+   （「也有人隔很久才刷到」的真实感）。两段相加仍是原来的 5 分钟~10 小时上下限。
 
    ⚠️ v2.24.21 修的真实 bug：旧版只用裸 setTimeout —— 用户发完动态关掉网页，
-   那个 5 分钟~10 小时的定时器随页面一起死掉，这条点赞/评论**永远不会出现**
+   那个定时器随页面一起死掉，这条点赞/评论**永远不会出现**
    （旧注释里写「见 flushPendingMomLikes」，但那个函数从来没被实现过）。
    现在凡是延迟超过 90 秒的，都先在存档里挂一条 state.momPending；
    启动时 scanPendingMomReactions() 把已到点的补上、没到点的重新计时。 */
 const MOM_LIKE_DELAY_MIN = 5*60e3;              /* 最早 5 分钟 */
+const MOM_LIKE_FAST_MAX  = 2*60*60e3;           /* v2.24.24：快档上限 2 小时 */
 const MOM_LIKE_DELAY_MAX = 10*60*60e3;          /* 最晚 10 小时（v2.24.21：由 24 小时收紧到 10 小时） */
+const MOM_LIKE_FAST_RATIO = 70;                 /* v2.24.24：七成走快档 */
 const MOM_PENDING_MAX_AGE = 36*60*60e3;         /* 超过 36 小时的陈年待办直接丢掉，不再补 */
-function momReactDelay(){ return randInt(MOM_LIKE_DELAY_MIN, MOM_LIKE_DELAY_MAX); }
+function momReactDelay(){
+  if(Math.random()*100 < MOM_LIKE_FAST_RATIO) return randInt(MOM_LIKE_DELAY_MIN, MOM_LIKE_FAST_MAX);
+  return randInt(MOM_LIKE_FAST_MAX, MOM_LIKE_DELAY_MAX);
+}
 
 /* 挂一条待办（写进存档）+ 起一个定时器 */
 function queueMomReaction(postId,cid,kind,at){
@@ -7080,6 +7093,10 @@ function buildLetterBody(cid){
   }
   return lines.join('\n')||'见字如面。今天也很想你。';
 }
+/* v2.24.24：连续 2 天没收到信 → 第 3 天起把写信概率抬到这个值（由 v2.24.15 的 80% 上调）。
+   取「只抬高不压低」（Math.max）：设置里填 20% 的人，等满两天后也能收到 90%，
+   但填 0 例外 —— 0 的含义是「永不写信」，见下面 dailyRollover 里的说明。 */
+const LETTER_STREAK_BOOST = 90;
 function dailyRollover(){
   const today=fmtDate(Date.now());
   if(state.dailyRoll===today)return;
@@ -7098,12 +7115,15 @@ function dailyRollover(){
       }
     }
     /* 联系人主动写信：按设置概率（v2.24.15 默认 50%）；
-       连续 2 天没写 → 第 3 天起自动抬到 80%（设置里调低也照样抬，只会更高不会更低） */
+       连续 2 天没写 → 第 3 天起自动抬到 90%（v2.24.24 由 80% 上调；
+       设置里调低也照样抬，只会更高不会更低）。
+       ⚠️ 例外：概率填 0 = 「永不写信」（设置页就是这么写的），此时既不判定也不累计
+       streak —— 否则设了 0 的人等满两天，反而天天收到信，与设置页的承诺自相矛盾。 */
     const wroteToday=state.letters.some(l=>l.from!=='me'&&fmtDate(l.t)===today);
-    if(!wroteToday){
-      const base=state.settings.letterProb??50;
+    const letterBase=state.settings.letterProb??50;
+    if(!wroteToday&&letterBase>0){
       const streakBoost=(state.letterStreak||0)>=2;
-      const p=streakBoost?Math.max(base,80):base;
+      const p=streakBoost?Math.max(letterBase,LETTER_STREAK_BOOST):letterBase;
       if(Math.random()*100<p){
         const cid=pick(state.contacts).id;
         state.letters.push({id:'l'+Date.now(),from:cid,to:'me',
@@ -7439,7 +7459,7 @@ function setPanelProb(s){
     <div class="card" style="padding:4px 16px">
       <div class="title" style="padding-top:14px">${I('announce',16)} 动态与来信</div>
       ${probRow('momentProb','联系人发邻屿圈概率','每日判定一次；命中后当天发 1~2 条动态',s.momentProb??40)}
-      ${probRow('letterProb','联系人写信概率','每日判定一次；连续 2 天没写会自动抬到 80%（0 = 永不写信）',s.letterProb??50)}
+      ${probRow('letterProb','联系人写信概率','每日判定一次；连续 2 天没写会自动抬到 90%（0 = 永不写信）',s.letterProb??50)}
     </div>
     <div class="card" style="padding:4px 16px">
       <div class="title" style="padding-top:14px">${I('heart',16)} 邻屿圈互动（我发的动态）</div>
@@ -8361,14 +8381,43 @@ function bindSetPanels(body,extra,s,persist){
     }
     setUnlockTimer=setTimeout(()=>{ setUnlockClicks=0; },600);
   });
-  /* 版本检查：拉线上 version.json（不走缓存），不一致则引导刷新 */
+  /* 版本检查：拉线上 version.json（不走缓存），不一致则引导刷新。
+     v2.24.24：单文件版也要真查 —— 它同源没有 version.json，改由主链上的桥接页代读
+     （见 singleUpdateCheck 那段注释），查到了就给一个真能用的「回发布页」按钮。 */
   const cv=$('checkVerBtn');
   if(cv)cv.addEventListener('click',()=>{
     const st=$('verState');
-    /* 单文件版没有同源 version.json，检查必然失败——直接说明 */
+    const mine=String(window.__BUILD__||'0');
     if(window.__SINGLE__){
-      if(st)st.textContent='单文件版无需检查更新，以发布页版本为准';
-      toast('单文件版以发布页为准');
+      const kind=versionSelfKind();
+      if(kind==='file'){
+        if(st)st.textContent='本机文件无法自动核对（当前 v'+mine+'）';
+        toast('本机文件请从发布页重新下载');
+        return;
+      }
+      if(!versionUpdateUrl()){
+        if(st)st.textContent='当前版本 v'+mine+'；这个地址不支持自动更新';
+        toast('这个地址不支持自动更新，请从发布页打开');
+        return;
+      }
+      if(st)st.textContent='正在向发布页核对版本…';
+      versionAskBridge().then(function(info){
+        if(!info||!info.build){
+          if(st)st.textContent='暂时连不上发布页（当前 v'+mine+'），联网后再试';
+          toast('暂时查不到最新版本');
+          return;
+        }
+        if(info.build===mine){
+          if(st)st.textContent='已是最新版本 v'+mine+' ✓';
+          toast('已是最新版本 ✓');
+        }else{
+          if(st)st.textContent='线上有新版 v'+info.build+'（你当前是 v'+mine+'）· 点下方浮条更新';
+          showVerBar(info.build);
+        }
+      },function(){
+        if(st)st.textContent='检查失败（当前 v'+mine+'），联网后再试';
+        toast('检查失败');
+      });
       return;
     }
     if(st)st.textContent='检查中…';
@@ -8816,6 +8865,125 @@ function gateCloudCapable(){
   const ch = gateChannel();
   return ch === 'main' || ch === 'single' || ch === 'gh' || ch === 'wb';
 }
+
+/* ================= v2.24.24 单文件版「真的能检查更新」 =================
+   起因（iOS 使用者反馈）：单文件版点「检查更新」只会回一句「以发布页版本为准」，
+   对方不知道该做什么，看起来就是永远更新不了。
+   更要紧的一层：htmlcode 的发布入口 /s/tonghua-island 是 307 跳到
+   /v/44?rev=… ，而 iOS「添加到主屏幕」存下的正是这个钉住版本的地址 ——
+   新版本发布后，那个图标永远打开旧版，而且旧版自己也不检查、不提示。
+
+   做法：复用主链上的 gate-bridge.html（它同源，读得到自己的 version.json），
+   加一对 th-ver-ask / th-ver-result 消息。本页拿到线上构建号后分两种情况：
+     · 指向「发布页入口」（htmlcode 的 /s/名字）：跳到不带版本号的入口 → 自然拿到最新版
+     · 指向「钉住版本」（/s/名字/v/44）：同样跳回入口 —— 这是唯一能脱离旧版的办法
+   只有 htmlcode 通道有「跳最新版」这回事；GitHub 版与主链有自己的同源检查，
+   本机另存的文件则根本没有「线上」可言，都如实说明而不是假装检查过。
+   ⚠️ 这条检查不依赖云服务 SDK（桥接页只 fetch 一个静态 json），失败一律静默，
+      绝不挡进站。 */
+const SINGLE_ENTRY_ORIGIN = 'https://www.htmlcode.fun';
+const VER_ASK_TIMEOUT_MS = 8000;
+
+/* 本页是从哪来的 */
+function versionSelfKind(){
+  try{
+    if(location.protocol === 'file:' || location.protocol === 'blob:') return 'file';
+    const h = location.hostname || '';
+    if(h.indexOf('htmlcode.fun') >= 0) return 'htmlcode';
+    if(h.indexOf('github.io') >= 0) return 'github';
+    if(location.origin === CLOUD_CFG.endpoint) return 'main';
+    return 'other';
+  }catch(e){ return 'other'; }
+}
+/* 「更新到最新」该往哪儿去：
+   htmlcode 的 /s/<名字>[/v/<版本>] → 一律回到不带版本号的发布页入口，
+   这样无论是「钉住旧版的桌面图标」还是「被人转发的旧版直链」都能脱身。
+   其它通道没有这种「按版本号钉住」的地址形态，返回空串，由调用方如实说明。 */
+function versionUpdateUrl(){
+  try{
+    if(versionSelfKind() !== 'htmlcode') return '';
+    const m = /^\/s\/([^\/?#]+)/.exec(location.pathname || '');
+    return m ? (SINGLE_ENTRY_ORIGIN + '/s/' + m[1]) : '';
+  }catch(e){ return ''; }
+}
+/* 经桥接页问线上构建号（本页不同源，直连 version.json 会被 CORS 挡掉） */
+function versionAskBridge(){
+  return new Promise(function(resolve){
+    const ORIGIN = CLOUD_CFG.endpoint;
+    const nonce = 'v' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden','true');
+    frame.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;border:0;';
+    /* ver=1：告诉桥接页这次只为问版本（它读得到 version.json，不需要云服务 SDK） */
+    frame.src = GATE_BRIDGE_URL + '?nonce=' + encodeURIComponent(nonce) + '&ver=1';
+    let settled = false;
+    const finish = function(v){
+      if(settled) return; settled = true;
+      try{ window.removeEventListener('message', onMsg); }catch(e){}
+      try{ if(frame.parentNode) frame.parentNode.removeChild(frame); }catch(e){}
+      resolve(v);
+    };
+    const ask = function(){
+      try{
+        frame.contentWindow.postMessage({ type:'th-ver-ask', nonce:nonce }, ORIGIN);
+      }catch(e){}
+    };
+    function onMsg(e){
+      if(e.origin !== ORIGIN) return;
+      const d = e.data;
+      if(!d || d.nonce !== nonce) return;
+      if(d.type === 'th-ver-ready'){ ask(); return; }     /* 桥报到 → 立刻问 */
+      if(d.type === 'th-ver-result'){
+        finish({ build: String(d.build || ''), version: String(d.version || '') });
+      }
+    }
+    window.addEventListener('message', onMsg);
+    frame.onload = ask;                                   /* 兜底：万一没收到 ready，加载完再问一次 */
+    try{ document.body.appendChild(frame); }catch(e){ finish({ build:'', version:'' }); return; }
+    setTimeout(function(){ finish({ build:'', version:'' }); }, VER_ASK_TIMEOUT_MS);
+  });
+}
+/* 底部浮条：有新版本可用（沿用 index.html 里那条同源自检的样式与 id，避免同时出现两条） */
+function showVerBar(build){
+  let d = document.getElementById('verBar');
+  if(d && d.parentNode) d.parentNode.removeChild(d);
+  d = document.createElement('div');
+  d.id = 'verBar';
+  d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:99999;' +
+    'background:#1c1c1e;color:#fff;padding:12px 20px;border-radius:24px;font-size:13px;' +
+    'box-shadow:0 10px 28px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap;';
+  d.textContent = '⬆ 有新版本 v' + build + '，点此更新';
+  d.onclick = function(){
+    const u = versionUpdateUrl();
+    if(!u){ toast('请到发布页打开最新版'); return; }
+    location.replace(u);
+  };
+  document.body.appendChild(d);
+  return d;
+}
+/* 单文件版启动时的静默自检：发现线上更新 → 自动跳一次（每个构建号、每个会话最多跳一次）。
+   为什么要「自动」而不是只提示：iOS 把页面加到主屏幕后，那个图标钉住的是当时的
+   /v/44 地址，光提示的话每开一次都得手点一次；自动跳转才能真正让图标「跟上新版」。
+   防打转：跳之前把「从哪个构建号跳的」记进 sessionStorage，同一个旧构建号不再重复跳。 */
+function singleUpdateCheck(){
+  if(!window.__SINGLE__) return;                       /* 只服务单文件版 */
+  try{ if(window.top !== window.self) return; }catch(e){ return; }   /* 被嵌进 iframe 时别捣乱 */
+  if(versionUpdateUrl() === '') return;                /* 没有「最新版」可跳（本机文件等） */
+  setTimeout(function(){
+    let hopped = '';
+    try{ hopped = String(sessionStorage.getItem('th_ver_hop') || ''); }catch(e){}
+    if(hopped === String(window.__BUILD__ || '0')) return;
+    versionAskBridge().then(function(info){
+      const mine = String(window.__BUILD__ || '0');
+      if(!info || !info.build || info.build === mine) return;
+      const url = versionUpdateUrl();
+      if(!url) return;
+      try{ sessionStorage.setItem('th_ver_hop', mine); }catch(e){}
+      try{ toast('发现新版 v' + info.build + '，正在打开…'); }catch(e){}
+      setTimeout(function(){ try{ location.replace(url); }catch(e){} }, 900);
+    }, function(){});
+  }, 1600);
+}
 function passAlreadyOk(){
   let pass = '';
   try{ pass = String(window.__PASS__ || ''); }catch(e){}
@@ -8948,6 +9116,10 @@ scheduleProactiveMsg();
 dailyRollover();
 scanPendingReplies();
 scanPendingMomReactions();       /* v2.24.21：补上离站期间到点的朋友圈点赞 / 评论 */
+/* v2.24.24：单文件版静默自检更新 —— 主页面的同源自检（见 index.html 末尾）对单文件版
+   是关掉的（它没有同源 version.json），这里补上：经主链桥接页问一个构建号，
+   发现线上更新就自动跳到发布页入口，让钉住旧版的桌面图标也能跟上。 */
+try{ singleUpdateCheck(); }catch(e){}
 /* v2.24.23：远程停站开关 —— 创建者在后台把 offline 置真，这里立刻就能拦下所有人，
    不必等重新发布。p_pass 传 null：服务端只回报状态、不写访问日志，所以探测不污染统计。 */
 try{

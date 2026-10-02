@@ -3,7 +3,7 @@
    断网时回落缓存，桌面图标照常打开。
    构建时 sync_all.py 会把下面 __BUILD__ 替换成实际 build 号：
    build 变 → 缓存名变 → activate 时旧缓存整体清除，不会残留旧文件。 */
-const BUILD='347';
+const BUILD='348';
 const CACHE='tonghua-b'+BUILD;
 const CORE=['./','./index.html','./app.js','./data.js','./games.js','./version.json',
             './manifest.webmanifest','./icon-192.png','./icon-180.png','./icon.png','./favicon.ico'];
