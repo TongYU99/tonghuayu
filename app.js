@@ -263,16 +263,44 @@ function bubPreviewStyle(p){
   if(p.id==='bp-wechat-dark') return 'background:#3eb575;border-radius:5px;color:#0d0d0d;position:relative;';
   return 'background:var(--accent);color:var(--accent-ink);';
 }
-/* 字体预设：作用于聊天气泡（.bubble） */
+/* 字体预设：作用于聊天气泡（.bubble）
+   ⚠️ v2.25.2：以前几个预设只写了 macOS/iOS 专有字体名
+   （"Songti SC" / "Kaiti SC" / "Yuanti SC" / "PingFang SC"），
+   在 Windows、Android、鸿蒙上这些名字**一个都命中不了** → 全部 fallback 到
+   系统默认字体。用户点了「圆体·软糯」，本机没有 Yuanti SC、也没有 PingFang SC，
+   最后落到 Microsoft YaHei —— 而雅黑正是系统默认字体本身，于是「换了等于没换」。
+   现在每个预设都按 平台优先级 补全字体栈，并且除了字体族外，
+   还叠加字重 / 字号 / 字距 / 行高，保证在任何平台上都有肉眼可见的差别。 */
 const FONTS=[
   { id:'',             name:'系统默认', css:'' },
-  { id:'f-serif',      name:'宋体·书卷', css:`.bubble{font-family:"Songti SC","STSong","Source Han Serif SC","Noto Serif SC",Georgia,serif !important;letter-spacing:.03em !important;}` },
-  { id:'f-kai',        name:'楷体·手写', css:`.bubble{font-family:"Kaiti SC","STKaiti",KaiTi,"Kaiti TC",serif !important;font-size:16.5px !important;letter-spacing:.05em !important;}` },
-  { id:'f-round',      name:'圆体·软糯', css:`.bubble{font-family:"Yuanti SC","PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif !important;border-radius:22px !important;letter-spacing:.02em !important;}` },
-  { id:'f-mono',       name:'等宽·手账', css:`.bubble{font-family:"SFMono-Regular",Menlo,Consolas,"Courier New",monospace !important;font-size:13.5px !important;letter-spacing:.01em !important;}` },
-  { id:'f-thin',       name:'细体·清淡', css:`.bubble{font-weight:300 !important;letter-spacing:.06em !important;}` },
+  { id:'f-serif',      name:'宋体·书卷',
+    css:`.bubble{font-family:"Songti SC","STSong","SimSun","Songti TC","Source Han Serif SC","Noto Serif SC","Noto Serif CJK SC",Georgia,"Times New Roman",serif !important;font-size:15.5px !important;letter-spacing:.04em !important;line-height:1.7 !important;font-weight:500 !important;}` },
+  { id:'f-kai',        name:'楷体·手写',
+    css:`.bubble{font-family:"Kaiti SC","STKaiti","KaiTi","Kaiti TC","TW-Kai","AR PL UKai CN",serif !important;font-size:17px !important;letter-spacing:.07em !important;line-height:1.8 !important;font-weight:400 !important;}` },
+  { id:'f-round',      name:'圆体·软糯',
+    css:`.bubble{font-family:"Yuanti SC","Yuanti TC","PingFang SC","HarmonyOS Sans SC","HarmonyOS Sans","MiSans","Xiaomi Sans","OPPO Sans","vivo Sans","Source Han Sans SC","Noto Sans SC","Microsoft YaHei UI","Microsoft YaHei",sans-serif !important;font-size:15.5px !important;letter-spacing:.03em !important;line-height:1.72 !important;font-weight:500 !important;border-radius:22px !important;}` },
+  { id:'f-mono',       name:'等宽·手账',
+    css:`.bubble{font-family:"SFMono-Regular",Menlo,Monaco,Consolas,"Cascadia Mono","Courier New","Sarasa Mono SC","Noto Sans Mono CJK SC",monospace !important;font-size:14px !important;letter-spacing:.02em !important;line-height:1.65 !important;font-weight:400 !important;}` },
+  { id:'f-thin',       name:'细体·清淡',
+    /* 中文字体几乎没有 300 字重，光靠 font-weight:300 视觉上等于没变；
+       这里叠加「变细字重 + 放大字号 + 拉开字距」，任何平台都能看出清淡感 */
+    css:`.bubble{font-family:"PingFang SC","HarmonyOS Sans SC","MiSans","Source Han Sans SC","Noto Sans SC","Microsoft YaHei Light","Microsoft YaHei","Segoe UI Light",sans-serif !important;font-weight:300 !important;font-size:15.5px !important;letter-spacing:.10em !important;line-height:1.85 !important;opacity:.92 !important;}` },
+  { id:'f-bold',       name:'粗体·醒目',
+    css:`.bubble{font-weight:700 !important;font-size:15.5px !important;letter-spacing:-.01em !important;line-height:1.6 !important;}` },
 ];
 function fontCss(id){ const f=FONTS.find(x=>x.id===id); return f?f.css:''; }
+/* 字体面板里那一行「今天也很想你 · 晚安」的预览样式：
+   把预设 CSS 的 .bubble{...} 外壳剥掉，变成可直接塞进 inline style 的声明串。
+   ⚠️ v2.25.2：旧写法是 .replace('.bubble{','').replace('}','') —— 只吃掉第一个
+   `}`，一旦预设 CSS 里再有别的花括号（@media / 多规则）就会切坏。这里改成
+   提取**第一对**花括号内的内容，且丢掉 inline 里无意义的 !important。 */
+function fontPreviewStyle(id){
+  const css=fontCss(id);
+  if(!css) return '';
+  const m=/\.bubble\s*\{([\s\S]*?)\}/.exec(css);
+  const body=m?m[1]:css;
+  return body.replace(/!important/g,'').replace(/\s+/g,' ').trim();
+}
 /* 取某个预设的 CSS（内置 / 自定义统一） */
 function bubCss(id){
   const list=(typeof state!=='undefined'&&state&&state.bubblePresets)||[];
@@ -3431,7 +3459,7 @@ function openFontManager(scope){
         <div style="display:flex;flex-direction:column;gap:8px">
           ${FONTS.map(f=>`
             <div class="font-row ${pending===f.id?'sel':''}" data-font="${f.id}">
-              <div class="font-demo" style="${f.id?f.css.replace('.bubble{','').replace('}',''):''}">今天也很想你 · 晚安</div>
+              <div class="font-demo" style="${f.id?fontPreviewStyle(f.id):''}">今天也很想你 · 晚安</div>
               <div class="font-nm">${f.name}</div>
             </div>`).join('')}
         </div>
@@ -6942,7 +6970,7 @@ function themePanelFont(s){
         ${FONTS.map(f=>`
           <div class="font-row ${(s.bubbleFont||'')===f.id?'sel':''}" data-fontpick="${f.id}">
             ${(s.bubbleFont||'')===f.id?'<span class="bub-on">使用中</span>':''}
-            <div class="font-demo" style="${f.id?f.css.replace('.bubble{','').replace('}',''):''}">今天也很想你 · 晚安</div>
+            <div class="font-demo" style="${f.id?fontPreviewStyle(f.id):''}">今天也很想你 · 晚安</div>
             <div class="font-nm">${f.name}</div>
           </div>`).join('')}
       </div>
@@ -7975,7 +8003,15 @@ function doExport(pick){
   if(pick.letter){ out.extras.letters=state.letters; names.push('信箱'); }
   if(pick.ava){ out.extras.avatarLib=state.avatarLib; names.push('头像库'); }
   if(pick.mom){ out.extras.moments=state.moments; names.push('朋友圈'); }
-  if(pick.set){ out.extras.settings=state.settings; names.push('界面设置'); }
+  if(pick.set){
+    out.extras.settings=state.settings;
+    /* v2.25.2：自定义气泡库（state.bubblePresets）一起带上。
+       以前整个数组都没被导出 —— 跨设备导入后联系人身上挂的 bubbleId
+       在新机里找不到对应预设，会静默回落成「跟随全局」，
+       用户表现为「我做的气泡没了、聊天变成默认样子」。 */
+    out.extras.bubblePresets=state.bubblePresets||[];
+    names.push('界面设置');
+  }
   const blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
   dlBlob(blob,'彤话屿_'+names.join('+')+'_'+stamp+'.json');
   toast('已导出：'+names.join('、'));
@@ -8079,7 +8115,9 @@ function importSummary(p){
   const nLetter=((p.kind==='partial'?extras.letters:d.letters)||[]).length;
   const nAva=((p.kind==='partial'?extras.avatarLib:d.avatarLib)||[]).length;
   const nSet=(p.kind==='partial'?!!extras.settings:!!d.settings)?1:0;
-  return {nCats,nCards,nStk,nPat,nContacts,nGroups,nMsg,nMoment,nLetter,nAva,nSet,
+  /* v2.25.2：自定义气泡库数量（分项在 extras.bubblePresets，完整备份在顶层 bubblePresets） */
+  const nBub=((p.kind==='partial'?extras.bubblePresets:d.bubblePresets)||[]).filter(x=>x&&!x.builtin).length;
+  return {nCats,nCards,nStk,nPat,nContacts,nGroups,nMsg,nMoment,nLetter,nAva,nSet,nBub,
           nPrivWho,nPrivCats,nPrivCards};
 }
 /* 消息去重键：同一角色 + 同文本 + 同时间戳视为同一条 */
@@ -8104,9 +8142,23 @@ function mergeCats(a,b){
   });
   return out;
 }
+/* 数组合并的统一取键：对象优先 id，再 name / text，最后才退化成值本身。
+   ⚠️ v2.25.2：以前这里写的是 String(x.name||x)。表情包、头像库这些数组
+   的元素结构是 {id,type,data} —— **根本没有 name**，于是 x.name||x 得到对象
+   本身，String(对象) 一律是 '[object Object]'。所有元素共用一个键，只要
+   目标端已经有 1 个表情包，「导入」进来的每一个都会被判为已存在 → 整批丢失。
+   这是「公用表情包导不过去」的真正原因（跨设备导入必现）。 */
+function mergeArrKey(x){
+  if(x && typeof x==='object'){
+    if(x.id!==undefined && x.id!==null && x.id!=='') return 'id:'+String(x.id);
+    if(x.name!==undefined && x.name!==null && x.name!=='') return 'nm:'+String(x.name);
+    if(x.text!==undefined && x.text!==null && x.text!=='') return 'tx:'+String(x.text);
+  }
+  return 'v:'+String(x);
+}
 function mergeArrByName(a,b){
-  const out=[].concat(a||[]); const seen={}; out.forEach(x=>{ seen[String(x.name||x)]=1; });
-  (b||[]).forEach(x=>{ const k=String(x.name||x); if(!seen[k]){ seen[k]=1; out.push(x); } });
+  const out=[].concat(a||[]); const seen={}; out.forEach(x=>{ seen[mergeArrKey(x)]=1; });
+  (b||[]).forEach(x=>{ const k=mergeArrKey(x); if(!seen[k]){ seen[k]=1; out.push(x); } });
   return out;
 }
 function mergeContacts(a,b){
@@ -8292,6 +8344,16 @@ function mergeIntoState(p){
       if(cur===undefined||cur===null||cur==='') state.settings[k]=d.settings[k];
     });
   }
+  /* v2.25.2：自定义气泡库并入（按 id 去重，内置款不重复塞）。
+     联系人身上的 bubbleId 只有在新机里找得到对应预设时才生效，
+     所以这一步必须在导入气泡 id 之前完成 —— mergeContacts 就在后面几行。 */
+  const bpIn = d.bubblePresets || null;
+  if(Array.isArray(bpIn)&&bpIn.length){
+    const before=(state.bubblePresets||[]).length;
+    state.bubblePresets=mergeArrByName(state.bubblePresets||[],bpIn);
+    const added=(state.bubblePresets||[]).length-before;
+    if(added>0) report.push('自定义气泡 +'+added+' 款');
+  }
   if(Array.isArray(d.avatars)&&d.avatars.length){
     state.avatars=mergeArrByName(state.avatars,d.avatars);
   }
@@ -8317,7 +8379,8 @@ function openImportDialog(raw, body, extra){
     s.nMoment?`朋友圈 <b>${s.nMoment}</b> 条`:null,
     s.nLetter?`信件 <b>${s.nLetter}</b> 封`:null,
     s.nAva?`头像 <b>${s.nAva}</b> 个`:null,
-    s.nSet?`界面与气泡设置`:null,
+    s.nBub?`自定义气泡 <b>${s.nBub}</b> 款`:null,
+    s.nSet?`界面与字体设置`:null,
   ].filter(Boolean);
 
   openModal('导入数据',`
@@ -8385,6 +8448,8 @@ function applyPartial(s2,part,parsed){
   if(Array.isArray(extras.avatarLib)) s2.avatarLib=extras.avatarLib;
   if(Array.isArray(extras.moments)) s2.moments=extras.moments;
   if(extras.settings&&typeof extras.settings==='object') s2.settings=extras.settings;
+  /* v2.25.2：自定义气泡库（覆盖模式下直接替换；内置款会由 migrate 补回） */
+  if(Array.isArray(extras.bubblePresets)&&extras.bubblePresets.length) s2.bubblePresets=extras.bubblePresets;
   return s2;
 }
 function dlBlob(blob,filename){

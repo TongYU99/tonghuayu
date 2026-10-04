@@ -48,6 +48,45 @@ if('serviceWorker' in navigator){ addEventListener('load',function(){ try{ navig
   },{passive:false});
 })();
 </script>
+<script>
+/* v2.25.2：多机型高度自适应（兜底给不认 dvh 的内核用）。
+   · 优先 visualViewport（能精确反映键盘弹起 / 地址栏收放后的真实可视高度）；
+   · 退到 innerHeight；再不行就不写，让 CSS 的 100vh 接管。
+   写进 CSS 变量 --app-h，CSS 侧在 @supports not (height:100dvh) 时读取。
+   只在高度变化超过 4px 时才写，避免 iOS 地址栏抖动引起的高频重排。 */
+(function(){
+  function setH(){
+    try{
+      var vv = window.visualViewport;
+      var h = (vv && vv.height) || window.innerHeight || 0;
+      if(!h) return;
+      var cur = parseInt(document.documentElement.style.getPropertyValue('--app-h'),10) || 0;
+      if(Math.abs(cur-h) > 4) document.documentElement.style.setProperty('--app-h', h+'px');
+      /* 键盘避让：visualViewport 高度 + 顶部位移 < 窗口高度 → 差值就是被键盘遮住的高度 */
+      if(vv){
+        var winH = window.innerHeight || 0;
+        var kb = Math.max(0, Math.round(winH - vv.height - vv.offsetTop));
+        /* 小于 80px 视为地址栏抖动，不算键盘 */
+        if(kb < 80) kb = 0;
+        var curKb = parseInt(document.documentElement.style.getPropertyValue('--kb-h'),10) || 0;
+        if(Math.abs(curKb-kb) > 4) document.documentElement.style.setProperty('--kb-h', kb+'px');
+      }
+    }catch(_){}
+  }
+  setH();
+  try{
+    window.addEventListener('resize', setH);
+    window.addEventListener('orientationchange', function(){ setTimeout(setH,120); });
+    if(window.visualViewport){
+      window.visualViewport.addEventListener('resize', setH);
+      window.visualViewport.addEventListener('scroll', setH);
+    }
+    /* 聚焦 / 失焦也重算一次（部分内核不主动派发 resize） */
+    document.addEventListener('focusin', function(){ setTimeout(setH,180); });
+    document.addEventListener('focusout', function(){ setTimeout(setH,180); });
+  }catch(_){}
+})();
+</script>
 <!-- 防缓存：保证手机端每次拉到最新页面 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
@@ -145,13 +184,37 @@ body{
   font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei",sans-serif;
   background:var(--page);display:flex;justify-content:center;font-size:15px;color:var(--ink);
   transition:background .25s ease;
+  /* v2.25.2 多机型适配：iOS 横屏 / 部分国产内核会自动放大字号，这里统一声明
+     「不要替我改字号」，字号完全由我们的媒体查询接管。 */
+  -webkit-text-size-adjust:100%;text-size-adjust:100%;
+  -webkit-tap-highlight-color:transparent;
 }
 #phone{
-  width:100%;max-width:480px;height:100dvh;position:relative;overflow:hidden;
+  width:100%;max-width:480px;
+  /* v2.25.2：height 三层兜底 —— 老内核不认 dvh，先给 100vh；
+     再用 @supports 逐级提升到 dvh（地址栏收起时不留白）。 */
+  height:100vh;height:100dvh;
+  position:relative;overflow:hidden;
   background:var(--bg);display:flex;flex-direction:column;
   box-shadow:0 0 40px rgba(0,0,0,.12);
+  /* v2.25.2：横屏刘海 / 挖孔屏的左右安全区。竖屏时为 0，不影响布局；
+     横屏时把内容整体让开摄像头那块，避免文字被切。 */
+  padding-left:env(safe-area-inset-left);
+  padding-right:env(safe-area-inset-right);
+  box-sizing:border-box;
+}
+@supports not (height:100dvh){
+  /* 不认 dvh 的内核：用 JS 写入的 --app-h（visualViewport 高度）兜底 */
+  #phone{ height:var(--app-h,100vh); }
 }
 @media (min-width:520px){ #phone{ border-left:1px solid #ccc; border-right:1px solid #ccc; } }
+/* v2.25.2：平板 / 折叠屏展开态 —— 原来一律锁死 480px 变成中间一条窄缝，
+   现在按可用宽度分档放大容器与栅格，充分利用大屏。 */
+@media (min-width:600px) and (max-width:779px){ #phone{ max-width:560px; } }
+@media (min-width:780px){
+  #phone{ max-width:620px; border-radius:0; }
+  .app-grid,.desk-grid{ gap:20px 10px; }
+}
 /* 大屏手机（Reno16 等 6.5"+）放大基础字号与触控目标 */
 @media (min-height:780px) and (min-width:360px){
   body{font-size:16px;}
@@ -427,6 +490,17 @@ body.dragging *{cursor:grabbing !important;}
 .btn.danger{background:var(--panel);color:#e0443f;border:1px solid var(--danger-line);}
 .btn.small{padding:7px 13px;font-size:12px;border-radius:12px;}
 .btn.block{width:100%;}
+/* v2.25.2：触控目标兜底。
+   Apple HIG / Material 都建议可点区域 ≥44×44px；手机上一堆 .btn.small 只有 ~30px 高，
+   拇指容易点偏。这里只对「粗指针」（手指）设备生效，桌面鼠标不受影响、排版不变；
+   用 min-height + 透明扩展的方式，不撑大视觉尺寸。 */
+@media (pointer:coarse){
+  .btn,button.chip,.chip[data-*]{min-height:44px;}
+  .btn.small{min-height:38px;}
+  .rowline .switch{min-height:auto;}
+  /* 面板里的关闭「✕」放大点击热区 */
+  .delx{padding:6px;margin:-6px;}
+}
 .avatar{
   width:42px;height:42px;border-radius:50%;flex:none;overflow:hidden;
   display:flex;align-items:center;justify-content:center;
@@ -556,6 +630,10 @@ body.dragging *{cursor:grabbing !important;}
   flex:none;background:var(--bar);backdrop-filter:blur(10px);
   border-top:1px solid var(--line);position:relative;
   padding-bottom:env(safe-area-inset-bottom);
+  /* v2.25.2：键盘避让 —— 由 JS 写入实际被键盘遮住的高度，输入栏自动抬上去。
+     旧内核不支持 dvh、键盘会直接盖住输入栏，这一步是 Android WebView / 老 Safari 的救命索。 */
+  margin-bottom:var(--kb-h,0px);
+  transition:margin-bottom .18s ease;
 }
 .inputbar{
   padding:5px 12px 8px;display:flex;align-items:center;gap:7px;
@@ -1552,6 +1630,25 @@ html[data-theme="dark"] #phone .nt-card{background:rgba(24,24,28,.82);}
 .todo-add input,.my-nm input,.nt-check input{
   touch-action:manipulation;
 }
+
+/* ============ v2.25.2 多机型适配（放在样式表最末，确保能覆盖前面的基础规则） ============ */
+/* 横屏（高度很矮，如看大图 / 长信时横过来）—— 状态栏压扁、首页时钟收起，把纵向空间让给内容。
+   ⚠️ 必须放在 #dock 基础定义（margin ... +26px）之后，否则同特异性下会被基础规则反压。 */
+@media (orientation:landscape) and (max-height:500px){
+  #statusBar{ height:24px; font-size:11px; padding:0 14px; }
+  #timeWidget{ display:none; }
+  #homePages{ padding-top:14px; }
+  #dock{ margin:6px 8px calc(env(safe-area-inset-bottom) + 10px); }
+  #dock .app-icon .tile{ width:46px; height:46px; border-radius:14px; }
+  #dock .app-icon .label{ display:none; }
+}
+/* 超窄屏（≤340px，含小屏模式与老机型）—— 桌面图标与间距压紧 */
+@media (max-width:340px){
+  .app-grid,.desk-grid{ gap:14px 4px; }
+  .app-icon .tile{ width:52px; height:52px; border-radius:16px; }
+  .app-icon .label{ font-size:10px; }
+  #statusBar{ padding:0 14px; }
+}
 </style>
 <style id="userCss"></style>
 </head>
@@ -1759,7 +1856,7 @@ html[data-theme="dark"] #phone .nt-card{background:rgba(24,24,28,.82);}
 <script defer src="sdk/workbuddy-cloud.js" data-cloud-sdk></script>
 
 <!-- 构建号：每次发布改动这一处即可让手机端缓存全部失效 -->
-<script>window.__BUILD__='350';</script>
+<script>window.__BUILD__='351';</script>
 <script>
 (function(){
   var B = window.__BUILD__ || '0';
