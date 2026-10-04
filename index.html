@@ -1186,6 +1186,34 @@ body.dragging *{cursor:grabbing !important;}
 .stk-b .stk-em{font-size:52px;line-height:1.25;display:block;}
 .stk-b img{max-width:112px;max-height:112px;display:block;border-radius:12px;}
 
+/* ============ v2.25.0：图片（聊天发图 / 动态配图 / 看大图） ============ */
+/* 聊天气泡里的图片：气泡留一点内边距，图片圆角略小于气泡 */
+.img-bubble{padding:5px;}
+.msg-img{display:block;max-width:186px;max-height:246px;width:auto;height:auto;border-radius:10px;cursor:zoom-in;}
+/* 全屏看大图（挂在 #phone 内，与 action-sheet 同层） */
+.img-viewer{
+  position:absolute;inset:0;z-index:80;background:rgba(0,0,0,.92);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  animation:fadeIn .16s ease;cursor:zoom-out;
+}
+.img-viewer img{max-width:94%;max-height:82%;object-fit:contain;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5);}
+.img-viewer .iv-tip{font-size:12px;color:rgba(255,255,255,.62);}
+/* 朋友圈动态配图：1 张大图 / 2~4 张两列 / 5~9 张三列 */
+.mom-imgs{display:grid;gap:4px;margin:6px 0 4px;max-width:246px;}
+.mom-imgs.g1{grid-template-columns:1fr;max-width:196px;}
+.mom-imgs.g2{grid-template-columns:repeat(2,1fr);}
+.mom-imgs.g3{grid-template-columns:repeat(3,1fr);}
+.mom-img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:7px;display:block;cursor:zoom-in;background:var(--soft);}
+.mom-imgs.g1 .mom-img{aspect-ratio:auto;max-height:280px;object-fit:contain;}
+/* 发表动态时已选图片的缩略图 */
+.mom-pick{display:flex;flex-wrap:wrap;gap:6px;}
+.mom-pick-i{position:relative;width:66px;height:66px;border-radius:9px;overflow:hidden;background:var(--soft);}
+.mom-pick-i img{width:100%;height:100%;object-fit:cover;display:block;}
+.mom-pick-i .mp-x{
+  position:absolute;top:1px;right:1px;width:17px;height:17px;border-radius:50%;
+  background:rgba(0,0,0,.62);color:#fff;font-size:10px;line-height:17px;text-align:center;cursor:pointer;
+}
+
 /* ============ 气泡 / 字体选择面板 ============ */
 .bub-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 .bub-card{
@@ -1731,7 +1759,7 @@ html[data-theme="dark"] #phone .nt-card{background:rgba(24,24,28,.82);}
 <script defer src="sdk/workbuddy-cloud.js" data-cloud-sdk></script>
 
 <!-- 构建号：每次发布改动这一处即可让手机端缓存全部失效 -->
-<script>window.__BUILD__='348';</script>
+<script>window.__BUILD__='349';</script>
 <script>
 (function(){
   var B = window.__BUILD__ || '0';

@@ -599,6 +599,11 @@ function migrate(s){
   /* v2.17.0：朋友圈互动通知（右上角铃铛） */
   if(!Array.isArray(s.momNotices)) s.momNotices=[];
   if(!Number.isFinite(+s.momUnread)) s.momUnread=0; else s.momUnread=+s.momUnread;
+  /* v2.25.0：老存档迁移 —— 通知列表缺 read 字段时按旧未读数把最近 N 条标为未读，
+     之后未读数一律由 momNotices 派生，彻底消灭「数字与列表对不上」。
+     ⚠️ 必须传 s：initState 执行时全局 state 还在 TDZ 里（let state=load() 尚未赋值），
+     这几个函数里若直接读 state 会抛 ReferenceError 直接白屏。 */
+  migrateMomNotices(s);
   /* v2.24.21：还没到点的朋友圈互动待办（关掉网页后重新进站也要能补上） */
   if(!Array.isArray(s.momPending)) s.momPending=[];
   /* v2.22.0：信件新增「收藏 star」「我的回信 myReply」字段（老存档补齐） */
@@ -2013,7 +2018,7 @@ function lastPreview(id){
   const arr=state.chats[id];
   if(!arr||!arr.length) return '…';
   const m=arr[arr.length-1];
-  return (m.role==='me'?'我: ':'')+(m.type==='rp'?'[红包]':m.type==='sticker'?'[表情包]':m.text).slice(0,20);
+  return (m.role==='me'?'我: ':'')+(m.type==='rp'?'[红包]':m.type==='sticker'?'[表情包]':m.type==='img'?'[图片]':m.text).slice(0,20);
 }
 let chatTab='single';
 function renderChatList(body,extra){
@@ -2187,6 +2192,11 @@ function renderChatMsgs(){
       const body = st ? (st.type==='emoji'?`<span class="stk-em">${escapeHtml(st.data)}</span>`:`<img src="${st.data}" alt="">`) : '[表情包]';
       /* v2.22.0：表情包不再套气泡背景，直接展示表情本身 */
       bub=`<div class="stk-b" data-mi="${arr.indexOf(m)}">${body}</div>`;
+    }else if(m.type==='img'){
+      /* v2.25.0：图片消息 —— 气泡内展示，点图看大图；长按仍是引用菜单 */
+      const q = m.quote?`<div class="quote-block">${escapeHtml(m.quote)}</div>`:'';
+      const mi = arr.indexOf(m);
+      bub=`<div class="bubble img-bubble" data-mi="${mi}">${q}<img class="msg-img" src="${escapeHtml(String(m.text||''))}" alt="图片" data-fulli="${mi}" loading="lazy"></div>`;
     }else{
       const q = m.quote?`<div class="quote-block">${escapeHtml(m.quote)}</div>`:'';
       const at = m.at?`<span class="at-tag">@${escapeHtml(m.at)}</span> `:'';
@@ -2221,7 +2231,7 @@ function renderChatMsgs(){
   /* 长按消息 → 操作菜单（引用回复）；桌面端右键同样可用 */
   function msgPreview(m){
     if(!m)return '';
-    return m.type==='sticker'?'[表情包]':m.type==='rp'?'[红包]':String(m.text).slice(0,30);
+    return m.type==='sticker'?'[表情包]':m.type==='rp'?'[红包]':m.type==='img'?'[图片]':String(m.text).slice(0,30);
   }
   function showMsgMenu(i){
     const m=arr[i];
@@ -2254,6 +2264,14 @@ function renderChatMsgs(){
     el.addEventListener('touchcancel',cancel);
     el.addEventListener('contextmenu',e=>{ e.preventDefault(); showMsgMenu(+el.dataset.mi); });
   });
+  /* v2.25.0：点图片看大图。长按会先弹出引用菜单，那种情况下手指抬起还会补一次 click，
+     所以「菜单已经开着」就忽略这次点击，免得大图盖在菜单上。 */
+  list.querySelectorAll('[data-fulli]').forEach(el=>el.addEventListener('click',ev=>{
+    if(document.querySelector('.action-sheet'))return;
+    ev.stopPropagation();
+    const mm=arr[+el.dataset.fulli];
+    if(mm&&mm.text)openImageViewer(mm.text);
+  }));
 }
 function isGroup(id){ return id && id[0]==='g'; }
 
@@ -2297,6 +2315,13 @@ function openChat(id){
   };
   if(sendBtnEl)sendBtnEl.classList.add('idle');
   if(ibInput)ibInput.addEventListener('input',syncSendBtn);
+  /* v2.25.0：在输入框里直接粘贴图片链接（或 data:image）→ 当图片消息发出，不必走加号面板 */
+  if(ibInput)ibInput.addEventListener('paste',e=>{
+    const dt=e.clipboardData; if(!dt)return;
+    const txt=String(dt.getData('text')||'').trim();
+    if(!txt)return;
+    if(isImageDataUrl(txt)||isImageLinkText(txt)){ e.preventDefault(); sendChatImage(txt); }
+  });
   sendBtnEl.addEventListener('click',sendCurrent);
   $('msgInput').addEventListener('keydown',e=>{ if(e.key==='Enter'){ sendCurrent(); } });
   /* 点击空白处收起底部面板（表情 / 表情包 / 加号面板）——输入栏本身不再收起 */
@@ -2323,6 +2348,8 @@ function openChat(id){
     const items=[
       ['emoji','表情','<circle cx="12" cy="12" r="8.5"/><path d="M8.8 13.5a4.3 4.3 0 0 0 6.4 0M9.3 9.5h.01M14.7 9.5h.01"/>'],
       ['stk','表情包','<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="9" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/>'],
+      /* v2.25.0：发图片（相册 / 拍照 / 粘贴链接，大图自动压缩） */
+      ['img','图片','<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="9.8" r="1.5"/><path d="M4.6 17.2l4.7-4.5 3.1 3 3-2.6 4 3.5"/>'],
       ['pat','拍一拍','<path d="M8 12.5V6.8a1.4 1.4 0 0 1 2.8 0v4.4m0-2.7a1.4 1.4 0 0 1 2.8 0v2.7m0-1.6a1.4 1.4 0 0 1 2.8 0v3.9c0 3.3-2 5.5-5.2 5.5-2.6 0-3.9-1.2-5.2-3.4L4.4 13c-.7-1.2.9-2.5 2-1.5l1.6 1.6z"/>'],
       ['call','通话','<path d="M5.5 4h3l1.5 4-2 1.5a12 12 0 0 0 6.5 6.5L16 14l4 1.5v3a1.8 1.8 0 0 1-2 1.8C10.6 19.6 4.4 13.4 3.7 6a1.8 1.8 0 0 1 1.8-2z"/>'],
     ];
@@ -2337,6 +2364,7 @@ function openChat(id){
       p.remove(); plusBtn.classList.remove('on');   /* 进功能前先收起面板 */
       if(t==='emoji'){ stkTab='emoji'; toggleStickerPanel(); }
       else if(t==='stk'){ stkTab='stk'; toggleStickerPanel(); }
+      else if(t==='img')openImagePicker(sendChatImage);     /* v2.25.0：发图片 */
       else if(t==='pat')openPatPicker();
       else if(t==='call')startCall(name);
       else if(t==='rp')doRedPacket(currentChatId);
@@ -2575,7 +2603,7 @@ function pushChatMsg(chatId,role,text,type,by,extra){
   else if(role==='ta'){
     markUnread(chatId);
     /* 不在该会话页时，桌面弹提示 + 系统推送通知（退出聊天后 ta 依然会回复） */
-    const preview = type==='sticker'?'[表情包]':type==='rp'?'[红包]':String(text).slice(0,40);
+    const preview = type==='sticker'?'[表情包]':type==='rp'?'[红包]':type==='img'?'[图片]':String(text).slice(0,40);
     let nm;
     if(isGroup(chatId)){
       const gname=(state.groups.find(g=>g.id===chatId)||{}).name||'群聊';
@@ -2670,7 +2698,7 @@ function sendCardBatch(chatId,contactId,maxN){
   /* 引用回复：20% 概率引用你最近一条消息 */
   const myMsgs=(state.chats[chatId]||[]).filter(m=>m.role==='me'&&m.type!=='rp');
   const quoteMsg = (Math.random()<0.2&&myMsgs.length)?myMsgs[myMsgs.length-1]:null;
-  const quoteText = quoteMsg ? (quoteMsg.type==='sticker'?'[表情包]':String(quoteMsg.text).slice(0,30)) : null;
+  const quoteText = quoteMsg ? (quoteMsg.type==='sticker'?'[表情包]':quoteMsg.type==='img'?'[图片]':String(quoteMsg.text).slice(0,30)) : null;
   let acc=0;
   for(let i=0;i<n;i++){
     acc+=(i===0)?0:randInt(Math.min(s.gapMin,s.gapMax),Math.max(s.gapMin,s.gapMax))*1000;
@@ -3685,7 +3713,14 @@ function renderMoments(body,extra){
               if(!st)state.contacts.forEach(c=>{ if(!st&&c.stickers)st=c.stickers.find(s=>s.id===p.sticker); });
               if(!st&&state.myStickers)st=state.myStickers.find(s=>s.id===p.sticker);
               content = st ? (st.type==='emoji'?`<div class="wm-stk">${escapeHtml(st.data)}</div>`:`<div class="wm-stk"><img src="${st.data}" alt=""></div>`) : '';
-            }else content=`<div class="wm-txt">${escapeHtml(p.text)}</div>`;
+            }else content=(p.text?`<div class="wm-txt">${escapeHtml(p.text)}</div>`:'');
+            /* v2.25.0：动态配图（相册压缩图 / 外链图）。1 张走大图，2~4 张两列，5~9 张三列；
+               点任意一张看大图。老存档没有 images 字段，这里判空即兼容。 */
+            if(Array.isArray(p.images)&&p.images.length){
+              const n=p.images.length, gcls=(n===1?'g1':(n<=4?'g2':'g3'));
+              content += `<div class="mom-imgs ${gcls}">${p.images.map((s,i)=>
+                `<img class="mom-img" src="${escapeHtml(String(s||''))}" alt="" data-mfull="${p.id}|${i}" loading="lazy">`).join('')}</div>`;
+            }
             return `<div class="wm-post">
               ${wmAvatar(p.author,author,'md')}
               <div style="flex:1;min-width:0">
@@ -3726,17 +3761,35 @@ function renderMoments(body,extra){
       bell.classList.remove('hide');
       updateMomBell();
       bell.onclick=()=>{
-        const list=(state.momNotices||[]).slice().sort((a,b)=>b.t-a.t).slice(0,30);
-        state.momUnread=0; save(); updateMomBell();
+        /* v2.25.0：先算未读 → 再取样渲染 → 最后统一标已读。
+           这样弹窗里看到的就是数字代表的那批，不会再出现「提示 5 条、实际 1 条」。 */
+        const all=(state.momNotices||[]).slice().sort((a,b)=>b.t-a.t);
+        const nUnread=unreadMomCount();
+        const nLike=all.filter(x=>x.read===false&&x.type==='like').length;
+        const nCmt =all.filter(x=>x.read===false&&x.type!=='like').length;
+        const list=all.slice(0,30);
+        const head = nUnread
+          ? `<div class="desc" style="margin-bottom:8px">新互动 <b>${nUnread}</b> 条${(nLike||nCmt)?`（赞 ${nLike} · 评论 ${nCmt}）`:''}</div>`
+          : (list.length?'<div class="desc" style="margin-bottom:8px">以下都是看过的互动</div>':'');
+        all.forEach(x=>{ x.read=true; });
+        state.momUnread=0; save(); updateMomBell(); try{ renderDesktop(); }catch(e){}
         openModal('互动通知',
-          list.length?list.map(n=>`
+          head+(list.length?list.map(n=>`
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line);font-size:13.5px;color:var(--ink)">
               <span style="display:inline-flex;align-items:center;gap:4px">${n.type==='like'?I('heart',12):I('bubble',12)} <b>${escapeHtml(n.by)}</b>${n.type==='like'?' 赞了你的动态':' 评论了你的动态'}</span>
               <span class="count" style="flex:none">${fmtTime(n.t)}</span>
-            </div>`).join(''):'<div class="empty" style="padding:20px 0">还没有新互动，发条动态等待回应吧</div>',
+            </div>`).join(''):'<div class="empty" style="padding:20px 0">还没有新互动，发条动态等待回应吧</div>'),
           null,null,'知道了');
       };
     }
+    /* v2.25.0：点动态配图 → 全屏看大图 */
+    body.querySelectorAll('[data-mfull]').forEach(el=>el.addEventListener('click',ev=>{
+      ev.stopPropagation();
+      const parts=String(el.dataset.mfull||'').split('|');
+      const pp=state.moments.find(x=>x.id===parts[0]);
+      const src=pp&&Array.isArray(pp.images)?pp.images[+parts[1]]:'';
+      if(src)openImageViewer(src);
+    }));
     body.querySelectorAll('[data-like]').forEach(el=>el.addEventListener('click',()=>{
       const p=state.moments.find(x=>x.id===el.dataset.like);
       if(p.likes.includes(me)){ p.likes=p.likes.filter(n=>n!==me); } else p.likes.push(me);
@@ -3813,15 +3866,34 @@ function renderMoments(body,extra){
 }
 /* v2.17.0：朋友圈发表弹窗（原 feed 顶部大输入卡移到这里，从右上角「＋」唤起） */
 function openMomComposer(after){
+  /* v2.25.0：动态可带图（相册选图自动压缩 / 粘贴链接直接用原图），最多 9 张 */
+  let imgs=[];
   const mk=openModal('发表动态',
-    `<div class="field" style="margin-bottom:0"><textarea id="momText" style="min-height:96px" placeholder="这一刻的想法…"></textarea></div>`,
+    `<div class="field" style="margin-bottom:10px"><textarea id="momText" style="min-height:88px" placeholder="这一刻的想法…"></textarea></div>
+     <div class="field" style="margin-bottom:0">
+       <div id="momImgs" class="mom-pick"></div>
+       <div style="display:flex;gap:8px;margin-top:8px">
+         <button class="btn ghost" id="momAddImg" style="flex:1">＋ 相册选图</button>
+         <button class="btn ghost" id="momAddLink" style="flex:1">＋ 图片链接</button>
+       </div>
+       <div class="desc" style="margin-top:6px">大图会自动压缩；最多 9 张。也可以只发图不写字。</div>
+     </div>`,
     ()=>{
       const txt=mk.querySelector('#momText').value.trim();
-      if(!txt){ toast('写点什么再发吧'); return false; }
-      state.moments.push({id:'m'+Date.now(),author:'me',text:txt,t:Date.now(),likes:[],comments:[]});
+      if(!txt && !imgs.length){ toast('写点什么，或加一张图片'); return false; }
+      state.moments.push({id:'m'+Date.now(),author:'me',text:txt,t:Date.now(),likes:[],comments:[],images:imgs.slice()});
       save(); after(); scheduleMomentReactions();
     },null,'发表');
   setTimeout(()=>{ const t=mk.querySelector('#momText'); if(t)t.focus(); },80);
+  const paint=()=>{
+    const box=mk.querySelector('#momImgs'); if(!box)return;
+    box.innerHTML=imgs.map((s,i)=>`<div class="mom-pick-i"><img src="${escapeHtml(s)}" alt=""><span class="mp-x" data-rmimg="${i}">✕</span></div>`).join('');
+    box.querySelectorAll('[data-rmimg]').forEach(el=>el.addEventListener('click',()=>{ imgs.splice(+el.dataset.rmimg,1); paint(); }));
+  };
+  const addImg=()=>{ if(imgs.length>=9){ toast('最多 9 张'); return; } pickLocalImage(src=>{ imgs.push(src); paint(); }); };
+  const addLink=()=>{ if(imgs.length>=9){ toast('最多 9 张'); return; } askImageLink(src=>{ imgs.push(src); paint(); }); };
+  mk.querySelector('#momAddImg').addEventListener('click',addImg);
+  mk.querySelector('#momAddLink').addEventListener('click',addLink);
 }
 /* 朋友圈右上角铃铛徽标：未读互动数 */
 function updateMomBell(){
@@ -3833,12 +3905,40 @@ function updateMomBell(){
     badge.textContent=n>9?'9+':String(n);
   }else if(badge)badge.remove();
 }
+/* ---------- v2.25.0：朋友圈互动通知（单一数据源） ----------
+   起因（用户反馈）：铃铛 / 桌面红点提示「好几位联系人点赞和评论了」，点开却只有一两条。
+   根因：未读数 state.momUnread 与通知列表 state.momNotices 是两套独立维护的数据，必然漂移 ——
+   最典型的是老存档 / 导入的备份里 momUnread 有值、momNotices 却是空的（数字显示 5，列表空空如也）。
+   现在每条通知带 read 标记，未读数一律由 unreadMomCount() 派生，
+   数字、列表、桌面红点三处永远一致。 */
+function unreadMomCount(s){
+  const list=((s||state).momNotices)||[];
+  let n=0;
+  for(const it of list){ if(it&&it.read===false)n++; }
+  return n;
+}
+function syncMomUnread(s){ s=s||state; s.momUnread=unreadMomCount(s); return s.momUnread; }
+/* 老存档迁移：通知记录全部缺 read 字段时，按旧未读数把时间上最近的 N 条标为未读。
+   参数 s 用于 initState 阶段（此时全局 state 处于 TDZ，不可读）。 */
+function migrateMomNotices(s){
+  s=s||state;
+  const list=s.momNotices;
+  if(!Array.isArray(list)||!list.length){ s.momUnread=0; return; }
+  const legacy=!list.some(it=>it&&typeof it.read==='boolean');
+  if(legacy){
+    const n=Math.max(0,Math.min(list.length,(+s.momUnread)||0));
+    /* 列表是「老的在前、新的在后」（push 追加），所以最近 N 条是尾部 ——
+       尾部 n 条标未读，其余标已读。别写反（写反会把最早的那几条当成未读）。 */
+    list.forEach((it,i)=>{ it.read = (i < list.length-n); });
+  }
+  syncMomUnread(s);
+}
 /* 记一条朋友圈互动通知（点赞 / 评论） */
 function pushMomNotice(by,type){
   state.momNotices=state.momNotices||[];
-  state.momNotices.push({t:Date.now(),by,type});
+  state.momNotices.push({t:Date.now(),by,type,read:false});
   if(state.momNotices.length>60)state.momNotices=state.momNotices.slice(-60);
-  state.momUnread=(state.momUnread||0)+1;
+  syncMomUnread();
   /* v2.24.24：把红点刷到桌面图标上 —— 人在桌面时也能看见「有人赞了你」 */
   try{ renderDesktop(); }catch(e){}
   save();
@@ -7012,6 +7112,101 @@ function smartStickerData(dataUrl,cb){
   if(stkCompress&&tooBig) return compressImage(dataUrl,480,cb,0.85);
   if(force) return compressImage(dataUrl,720,cb,0.85);
   cb(dataUrl);
+}
+
+/* ================= v2.25.0：发图片（聊天 / 朋友圈共用） =================
+   两个入口：① 手机相册 / 拍照（input[type=file]）② 粘贴图片链接（http/https）。
+   压缩策略：相册图最长边 1280 / 质量 0.8；压完仍超 500KB 再降一档（960 / 0.72）。
+   外链图（http/https）不下载、不压缩，直接用原地址 —— 跨域画布会被污染读不出像素，
+   而且它的体积不占我们的 localStorage。
+   ⚠️ 相册图以 base64 存进存档（与表情包同一套路），所以压缩必须够狠，
+   否则几张原图就能把 localStorage 顶爆（爆了会走「存储已满」兜底提示）。 */
+const IMG_SIDE=1280, IMG_Q=0.8, IMG_SOFT=500*1024;
+function isHttpUrl(s){ return /^https?:\/\//i.test(String(s||'').trim()); }
+function isImageDataUrl(s){ return /^data:image\//i.test(String(s||'').trim()); }
+function isImageLinkText(s){
+  const t=String(s||'').trim();
+  if(!isHttpUrl(t))return false;
+  return /\.(png|jpe?g|gif|webp|bmp|avif|heic)(\?|#|$)/i.test(t);
+}
+/* 相册图 → 压缩 → 回调（回调拿到 dataURL） */
+function shrinkImage(dataUrl,cb){
+  compressImage(dataUrl,IMG_SIDE,function(out){
+    const s1=out||dataUrl;
+    if(s1.length>IMG_SOFT) return compressImage(s1,960,function(o2){ cb(o2||s1); },0.72);
+    cb(s1);
+  },IMG_Q);
+}
+/* 从手机相册 / 相机选一张（异步回调 dataURL） */
+function pickLocalImage(cb){
+  const inp=document.createElement('input');
+  inp.type='file'; inp.accept='image/*'; inp.style.display='none';
+  inp.addEventListener('change',function(){
+    const f=this.files&&this.files[0];
+    try{ inp.remove(); }catch(e){}
+    if(!f)return;
+    if(!/^image\//.test(f.type||'')){ toast('请选择图片文件'); return; }
+    if(f.size>12*1024*1024){ toast('图片超过 12MB，请先压缩或换一张'); return; }
+    const r=new FileReader();
+    r.onload=()=>shrinkImage(String(r.result||''),cb);
+    r.onerror=()=>toast('图片读取失败');
+    r.readAsDataURL(f);
+  });
+  document.body.appendChild(inp);
+  inp.click();
+}
+/* 选图面板：相册 / 粘贴链接 */
+function openImagePicker(onPick){
+  const sheet=document.createElement('div');
+  sheet.className='action-sheet';
+  sheet.innerHTML=`
+    <div class="sheet-mask"></div>
+    <div class="sheet-panel">
+      <div style="font-weight:800;font-size:15px;margin-bottom:2px">发送图片</div>
+      <div class="desc" style="margin-bottom:10px">相册选图会自动压缩；粘贴链接则直接用原图。</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="chip msg-act" data-img="local" style="padding:13px 15px;font-size:14px;cursor:pointer;border-radius:12px;background:#f6f6f8">🖼 从手机相册选择</div>
+        <div class="chip msg-act" data-img="link" style="padding:13px 15px;font-size:14px;cursor:pointer;border-radius:12px;background:#f6f6f8">🔗 粘贴图片链接</div>
+      </div>
+    </div>`;
+  document.getElementById('phone').appendChild(sheet);
+  sheet.querySelector('.sheet-mask').addEventListener('click',()=>sheet.remove());
+  sheet.querySelector('[data-img="local"]').addEventListener('click',()=>{ sheet.remove(); pickLocalImage(onPick); });
+  sheet.querySelector('[data-img="link"]').addEventListener('click',()=>{ sheet.remove(); askImageLink(onPick); });
+}
+/* 粘贴链接输入框 */
+function askImageLink(onPick){
+  const mk=openModal('粘贴图片链接',
+    '<div class="field" style="margin-bottom:0"><input id="imgLinkInput" type="text" placeholder="https://…/photo.jpg"></div>',
+    ()=>{
+      const v=(mk.querySelector('#imgLinkInput').value||'').trim();
+      if(!v){ toast('还没粘贴链接'); return false; }
+      if(!isHttpUrl(v)&&!isImageDataUrl(v)){ toast('链接需要以 http:// 或 https:// 开头'); return false; }
+      onPick(v);
+    },null,'发送');
+  setTimeout(()=>{ const i=mk.querySelector('#imgLinkInput'); if(i)i.focus(); },80);
+}
+/* 我发一张图片到当前会话 */
+function sendChatImage(src){
+  if(!currentChatId)return;
+  const q=replyQuote; setReplyQuote(null);
+  const m=pushChatMsg(currentChatId,'me',src,'img',null,{quote:q?q.text:null});
+  playDing('send');
+  /* 与文字消息同规则：已读不回模式下 15~60 秒标已读，再按概率决定回不回 */
+  if(m && state.settings.readNoReply){
+    const chatId=currentChatId;
+    setTimeout(()=>{ m.read=true; save(); if(currentChatId===chatId)renderChatMsgs(); },randInt(15,60)*1000);
+    if(Math.random()*100 < (state.settings.readNoProb??60))return;
+  }
+  scheduleReply(currentChatId);
+}
+/* 全屏看大图（点任意处关闭） */
+function openImageViewer(src){
+  const box=document.createElement('div');
+  box.className='img-viewer';
+  box.innerHTML=`<img src="${escapeHtml(String(src||''))}" alt="图片"><div class="iv-tip">点任意处关闭</div>`;
+  document.getElementById('phone').appendChild(box);
+  box.addEventListener('click',()=>{ try{ box.remove(); }catch(e){} });
 }
 
 function renderChatListRefresh(){
