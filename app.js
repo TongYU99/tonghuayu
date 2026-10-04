@@ -7745,7 +7745,54 @@ function exportStats(){
   const nLetters=(state.letters||[]).length;
   const nAva=(state.avatarLib||[]).length;
   const nMom=(state.moments||[]).length;
-  return {nCards,nCats,nStk,nPat,contacts,groups,nMsg,nLetters,nAva,nMom};
+  /* v2.25.1：专用字卡库（每位联系人独立）—— 之前完全没进导出/导入清单，
+     用户把主链备份导进次链时，「专用字卡」一张都过不去（表情包同段一起漏）。 */
+  const priv=privStats();
+  return {nCards,nCats,nStk,nPat,contacts,groups,nMsg,nLetters,nAva,nMom,
+          nPrivWho:priv.nWho,nPrivCats:priv.nCats,nPrivCards:priv.nCards};
+}
+/* 专用字卡库统计：多少人建了 / 共几个分类 / 共多少张 */
+function privStats(){
+  const libs=state.privLibs||{};
+  let nWho=0,nCats=0,nCards=0;
+  Object.keys(libs).forEach(id=>{
+    const lib=libs[id]; if(!lib) return;
+    const cats=Array.isArray(lib.cats)?lib.cats:[];
+    if(!cats.length) return;                 /* 建过但没内容的，不算 */
+    nWho++;
+    nCats+=cats.length;
+    cats.forEach(c=>{ nCards+=(Array.isArray(c.cards)?c.cards.length:0); });
+  });
+  return {nWho,nCats,nCards};
+}
+/* 专用字卡库去重合并（按联系人 id → 按分类名 → 按卡面文字） */
+function mergePrivLibs(a,b){
+  const out=JSON.parse(JSON.stringify(a||{}));
+  Object.keys(b||{}).forEach(id=>{
+    const src=b[id]; if(!src||typeof src!=='object') return;
+    if(!out[id]){ out[id]=JSON.parse(JSON.stringify(src)); return; }
+    const tgt=out[id];
+    /* enabled / weight：本地没设过才补（不覆盖本地偏好） */
+    ['enabled','weight'].forEach(k=>{
+      if((tgt[k]===undefined||tgt[k]===null||tgt[k]==='')&&src[k]!==undefined) tgt[k]=src[k];
+    });
+    if(!Array.isArray(tgt.cats)) tgt.cats=[];
+    (Array.isArray(src.cats)?src.cats:[]).forEach(sc=>{
+      const hit=tgt.cats.find(tc=>tc&&tc.name===sc.name);
+      if(!hit){
+        tgt.cats.push({name:sc.name,enabled:sc.enabled!==false,
+                       cards:(Array.isArray(sc.cards)?sc.cards:[]).slice()});
+        return;
+      }
+      if(!Array.isArray(hit.cards)) hit.cards=[];
+      const seen={}; hit.cards.forEach(c=>{ seen[String((c&&c.text)||c)]=1; });
+      (Array.isArray(sc.cards)?sc.cards:[]).forEach(c=>{
+        const k=String((c&&c.text)||c);
+        if(!seen[k]){ seen[k]=1; hit.cards.push(c); }
+      });
+    });
+  });
+  return out;
 }
 function openExportDialog(){
   const st=exportStats();
@@ -7780,6 +7827,13 @@ function openExportDialog(){
       <div style="flex:1">
         <div class="name">拍一拍 <span class="count">${st.nPat} 条</span></div>
         <div class="meta">拍一拍词库（我拍ta / ta拍我 共用的词卡）</div>
+      </div>
+    </label>
+    <label class="exp-row">
+      <input type="checkbox" class="exp-card" id="expPriv" style="margin-top:3px">
+      <div style="flex:1">
+        <div class="name">专用字卡 <span class="count">${st.nPrivWho} 位 · ${st.nPrivCats} 组 · ${st.nPrivCards} 张</span></div>
+        <div class="meta">每位联系人独立的专用字卡库（含加权倍率与停用状态）</div>
       </div>
     </label>
 
@@ -7835,6 +7889,7 @@ function openExportDialog(){
       cats:  $('expCats').checked,
       stk:   $('expStk').checked,
       pat:   $('expPat').checked,
+      priv:  $('expPriv').checked,
       dm:    $('expDm').checked,
       grp:   $('expGrp').checked,
       letter:$('expLetter').checked,
@@ -7842,14 +7897,14 @@ function openExportDialog(){
       mom:   $('expMom').checked,
       set:   $('expSet').checked,
     };
-    const any = pick.cats||pick.stk||pick.pat||pick.dm||pick.grp||pick.letter||pick.ava||pick.mom||pick.set;
+    const any = pick.cats||pick.stk||pick.pat||pick.priv||pick.dm||pick.grp||pick.letter||pick.ava||pick.mom||pick.set;
     if(!pick.all && !any){ toast('至少勾选一项'); return false; }
     doExport(pick);
   },null,'导出','取消');
 
   /* 勾选联动：全部导出 → 一键全选；子项全勾则回勾「全部导出」（v2.24.2 统一处理所有子项） */
   const all=$('expAll');
-  const SUB_IDS=['expCats','expStk','expPat','expDm','expGrp','expLetter','expAva','expMom','expSet'];
+  const SUB_IDS=['expCats','expStk','expPat','expPriv','expDm','expGrp','expLetter','expAva','expMom','expSet'];
   const anySub=()=>SUB_IDS.some(id=>{ const el=$(id); return el&&el.checked; });
   const allSub=()=>SUB_IDS.every(id=>{ const el=$(id); return el&&el.checked; });
   if(all)all.addEventListener('change',()=>{
@@ -7873,14 +7928,37 @@ function doExport(pick){
   const out={__type:'tonghuayu-partial',exportedAt:Date.now(),version:window.__BUILD__||''};
   const names=[];
   /* 字卡相关 */
-  if(pick.cats||pick.stk||pick.pat) out.cards={};
+  if(pick.cats||pick.stk||pick.pat||pick.priv) out.cards={};
   if(pick.cats){ out.cards.cats=state.cats; names.push('字卡分组'); }
-  if(pick.stk){ out.cards.stickers=state.stickers; out.cards.myStickers=state.myStickers; names.push('表情包'); }
+  /* v2.25.1：表情包勾选现在把「每位联系人的专属表情包」也带上。
+     它们存在 contact.stickers 里（ta 专发 / 朋友圈专属表情评论），
+     以前只在导出「单人聊天」时以精简形式带出，导入时同名联系人字段
+     永远不会被补齐 → 跨设备必然丢。 */
+  if(pick.stk){
+    out.cards.stickers=state.stickers;
+    out.cards.myStickers=state.myStickers;
+    out.cards.contactStickers={};
+    let nCS=0;
+    (state.contacts||[]).forEach(c=>{
+      if(Array.isArray(c.stickers)&&c.stickers.length){
+        out.cards.contactStickers[c.id]={name:c.name,stickers:c.stickers};
+        nCS+=c.stickers.length;
+      }
+    });
+    names.push('表情包'+(nCS?('（含专属 '+nCS+' 个）'):''));
+  }
   if(pick.pat){ out.cards.patLib=state.patLib; names.push('拍一拍'); }
+  /* v2.25.1：专用字卡库补进导出（此前整个字段没被导出，跨设备导入必丢） */
+  if(pick.priv){ out.cards.privLibs=state.privLibs||{}; names.push('专用字卡'); }
   /* 聊天记录 */
   if(pick.dm||pick.grp) out.chats={};
   if(pick.dm){
-    out.chats.contacts=(state.contacts||[]).map(c=>({id:c.id,name:c.name,avatar:c.avatar}));
+    /* v2.25.1：单人聊天导出也带上联系人的专属表情包（原始 stickers）。 */
+    out.chats.contacts=(state.contacts||[]).map(c=>{
+      const o={id:c.id,name:c.name,avatar:c.avatar};
+      if(Array.isArray(c.stickers)&&c.stickers.length) o.stickers=c.stickers;
+      return o;
+    });
     out.chats.dm={};
     (state.contacts||[]).forEach(c=>{ out.chats.dm[c.id]=state.chats[c.id]||[]; });
     out.chats.contactMeta=(state.contacts||[]).map(c=>({id:c.id,name:c.name}));
@@ -7975,6 +8053,16 @@ function importSummary(p){
   const nCats=(cards.cats||[]).length;
   const nStk=((cards.stickers||[]).length)+((cards.myStickers||[]).length);
   const nPat=((cards.patLib&&cards.patLib.me)||[]).length;
+  /* v2.25.1：专用字卡统计（分项文件在 cards.privLibs，完整备份在顶层 privLibs） */
+  const privSrc=(p.kind==='partial'?cards.privLibs:d.privLibs)||{};
+  let nPrivWho=0,nPrivCats=0,nPrivCards=0;
+  Object.keys(privSrc).forEach(id=>{
+    const lib=privSrc[id]; if(!lib) return;
+    const cs=Array.isArray(lib.cats)?lib.cats:[];
+    if(!cs.length) return;
+    nPrivWho++; nPrivCats+=cs.length;
+    cs.forEach(c=>{ nPrivCards+=(Array.isArray(c.cards)?c.cards.length:0); });
+  });
   let nContacts=0,nGroups=0,nMsg=0;
   if(p.kind==='partial'){
     nContacts=(chats.contacts||[]).length||Object.keys(chats.dm||{}).length;
@@ -7991,7 +8079,8 @@ function importSummary(p){
   const nLetter=((p.kind==='partial'?extras.letters:d.letters)||[]).length;
   const nAva=((p.kind==='partial'?extras.avatarLib:d.avatarLib)||[]).length;
   const nSet=(p.kind==='partial'?!!extras.settings:!!d.settings)?1:0;
-  return {nCats,nCards,nStk,nPat,nContacts,nGroups,nMsg,nMoment,nLetter,nAva,nSet};
+  return {nCats,nCards,nStk,nPat,nContacts,nGroups,nMsg,nMoment,nLetter,nAva,nSet,
+          nPrivWho,nPrivCats,nPrivCards};
 }
 /* 消息去重键：同一角色 + 同文本 + 同时间戳视为同一条 */
 function msgKey(m){ return (m&&m.role||'')+'|'+(m&&m.ts||m&&m.time||'')+'|'+String((m&&m.text)||''); }
@@ -8026,7 +8115,18 @@ function mergeContacts(a,b){
   (b||[]).forEach(c=>{
     if(idx[c.name]!==undefined){ /* 同名联系人保留本地，仅补齐缺失字段 */
       const tgt=out[idx[c.name]];
-      Object.keys(c).forEach(k=>{ if(tgt[k]===undefined||tgt[k]===null||tgt[k]==='') tgt[k]=c[k]; });
+      Object.keys(c).forEach(k=>{
+        const cur=tgt[k];
+        if(cur===undefined||cur===null||cur===''){ tgt[k]=c[k]; return; }
+        /* ⚠️ v2.25.1：数组类字段要「并入」而不是「本地非空就跳过」。
+           以前只要本地有 c.stickers（哪怕只有一个），导入对方的
+           专属表情包就被整批丢掉 —— 同名联系人场景下必现。 */
+        if(Array.isArray(cur)&&Array.isArray(c[k])&&c[k].length){
+          const mergeKey=x=>String((x&&x.id)||(x&&x.name)||x);
+          const seen={}; cur.forEach(x=>{ seen[mergeKey(x)]=1; });
+          c[k].forEach(x=>{ const kk=mergeKey(x); if(!seen[kk]){ seen[kk]=1; cur.push(x); } });
+        }
+      });
     }else{ idx[c.name]=out.length; out.push(Object.assign({},c)); }
   });
   return out;
@@ -8089,6 +8189,48 @@ function mergeIntoState(p){
       state.patLib.ta=mergeArrByName(state.patLib.ta,cards.patLib.ta);
       report.push('拍一拍(ta) +'+((state.patLib.ta||[]).length-b)+' 条');
     }
+  }
+  /* v2.25.1：专用字卡库（分项文件在 cards.privLibs，完整备份在顶层 privLibs） */
+  const privIn = (p.kind==='partial'?cards.privLibs:d.privLibs);
+  if(privIn&&typeof privIn==='object'&&Object.keys(privIn).length){
+    const before=privStats().nCards;
+    state.privLibs=mergePrivLibs(state.privLibs,privIn);
+    const now=privStats();
+    report.push('专用字卡 +'+(now.nCards-before)+' 张（'+now.nWho+' 位）');
+  }
+  /* v2.25.1：联系人专属表情包（cards.contactStickers:{contactId:{name,stickers}}）。
+     按 id 优先、name 兜底找本地联系人，把对方的专属表情包并进去。 */
+  const csIn = p.kind==='partial' ? cards.contactStickers : null;
+  if(csIn&&typeof csIn==='object'){
+    let added=0;
+    Object.keys(csIn).forEach(cid=>{
+      const box=csIn[cid]; if(!box) return;
+      const list=Array.isArray(box.stickers)?box.stickers:(Array.isArray(box)?box:[]);
+      if(!list.length) return;
+      const hit=(state.contacts||[]).find(c=>c.id===cid)
+             ||(state.contacts||[]).find(c=>c.name===box.name);
+      if(!hit) return;
+      if(!Array.isArray(hit.stickers)) hit.stickers=[];
+      const seen={}; hit.stickers.forEach(x=>{ seen[String((x&&x.id)||x)]=1; });
+      list.forEach(x=>{
+        const k=String((x&&x.id)||x);
+        if(!seen[k]){ seen[k]=1; hit.stickers.push(x); added++; }
+      });
+    });
+    if(added) report.push('专属表情包 +'+added+' 个');
+  }
+  /* v2.25.1：单人聊天里也可能带着联系人的 stickers（新版导出），同样并进去 */
+  if(p.kind==='partial'&&Array.isArray(chats.contacts)){
+    let added=0;
+    chats.contacts.forEach(c=>{
+      if(!c||!Array.isArray(c.stickers)||!c.stickers.length) return;
+      const hit=(state.contacts||[]).find(x=>x.id===c.id)||(state.contacts||[]).find(x=>x.name===c.name);
+      if(!hit) return;
+      if(!Array.isArray(hit.stickers)) hit.stickers=[];
+      const seen={}; hit.stickers.forEach(x=>{ seen[String((x&&x.id)||x)]=1; });
+      c.stickers.forEach(x=>{ const k=String((x&&x.id)||x); if(!seen[k]){ seen[k]=1; hit.stickers.push(x); added++; } });
+    });
+    if(added) report.push('专属表情包 +'+added+' 个');
   }
 
   /* —— 联系人 / 群 —— */
@@ -8168,6 +8310,7 @@ function openImportDialog(raw, body, extra){
     s.nCats?`字卡 <b>${s.nCats}</b> 组 · <b>${s.nCards}</b> 张`:null,
     s.nStk?`表情包 <b>${s.nStk}</b> 个`:null,
     s.nPat?`拍一拍 <b>${s.nPat}</b> 条`:null,
+    s.nPrivWho?`专用字卡 <b>${s.nPrivWho}</b> 位 · <b>${s.nPrivCats}</b> 组 · <b>${s.nPrivCards}</b> 张`:null,
     s.nContacts?`联系人 <b>${s.nContacts}</b> 位`:null,
     s.nGroups?`群聊 <b>${s.nGroups}</b> 个`:null,
     s.nMsg?`聊天记录 <b>${s.nMsg}</b> 条`:null,
@@ -8230,6 +8373,8 @@ function applyPartial(s2,part,parsed){
   if(cards.stickers) s2.stickers=cards.stickers;
   if(cards.myStickers) s2.myStickers=cards.myStickers;
   if(cards.patLib) s2.patLib=cards.patLib;
+  /* v2.25.1：专用字卡库（覆盖模式下直接替换） */
+  if(cards.privLibs&&typeof cards.privLibs==='object') s2.privLibs=cards.privLibs;
   if(Array.isArray(chats.contacts)&&chats.contacts.length) s2.contacts=chats.contacts;
   if(Array.isArray(chats.groups)&&chats.groups.length) s2.groups=chats.groups;
   s2.chats=s2.chats||{};
